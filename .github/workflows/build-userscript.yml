@@ -1,0 +1,68 @@
+name: publish userscript to fork pages
+
+# Fork-only workflow (pc418). Builds the desktop Tampermonkey userscript from
+# whatever is on `dev` and publishes it to this fork's GitHub Pages, so it can
+# be installed from:
+#   https://pc418.github.io/kiss-translator/kiss-translator.user.js
+# The build points @updateURL/@downloadURL at that same URL, so Tampermonkey
+# auto-updates from THIS fork instead of reverting to upstream's release.
+# Upstream's release.yml only fires on v* tags, so it never runs here.
+
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+# One live deploy at a time; a newer push supersedes an in-flight one.
+concurrency:
+  group: fork-userscript-pages
+  cancel-in-progress: true
+
+permissions:
+  contents: write # deploy action pushes to the gh-pages branch
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.14.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - run: pnpm install
+
+      # @version must strictly increase for Tampermonkey to auto-update. The
+      # base version in .env (REACT_APP_VERSION) only bumps on upstream syncs,
+      # so append the run number to get a monotonic tail between syncs.
+      - name: Compute userscript @version
+        run: |
+          base="$(node -p "require('./package.json').version")"
+          echo "USERSCRIPT_VERSION=${base}.${{ github.run_number }}" >> "$GITHUB_ENV"
+          echo "Building userscript @version = ${base}.${{ github.run_number }}"
+
+      # Only build:web is needed for the desktop userscript. It writes
+      # build/web/kiss-translator.user.js alongside the web options page.
+      # GitHub Actions sets CI=true, so react-scripts treats warnings as errors
+      # (same as upstream's own release build).
+      - name: Build userscript
+        env:
+          REACT_APP_VERSION: ${{ env.USERSCRIPT_VERSION }}
+          REACT_APP_USERSCRIPT_DOWNLOADURL: https://pc418.github.io/kiss-translator/kiss-translator.user.js
+        run: pnpm build:web
+
+      - name: Show generated metadata header
+        run: sed -n '1,20p' build/web/kiss-translator.user.js
+
+      - name: Deploy build/web to gh-pages
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: build/web
+          branch: gh-pages
+          single-commit: true
