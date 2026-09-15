@@ -38,14 +38,18 @@ jobs:
 
       - run: pnpm install
 
-      # @version must strictly increase for Tampermonkey to auto-update. The
-      # base version in .env (REACT_APP_VERSION) only bumps on upstream syncs,
-      # so append the run number to get a monotonic tail between syncs.
+      # @version must STRICTLY increase forever or Tampermonkey silently stops
+      # updating. The base version in .env only bumps on upstream syncs, so we
+      # append a tail. Deliberately NOT github.run_number: that counter resets
+      # to 1 if this workflow file is ever renamed or recreated, which sends the
+      # version backwards (e.g. 2.0.32.15 -> 2.0.32.1) and permanently kills
+      # auto-update. A UTC timestamp is monotonic regardless.
       - name: Compute userscript @version
         run: |
           base="$(node -p "require('./package.json').version")"
-          echo "USERSCRIPT_VERSION=${base}.${{ github.run_number }}" >> "$GITHUB_ENV"
-          echo "Building userscript @version = ${base}.${{ github.run_number }}"
+          ver="${base}.$(date -u +%y%m%d%H%M)"
+          echo "USERSCRIPT_VERSION=${ver}" >> "$GITHUB_ENV"
+          echo "Building userscript @version = ${ver}"
 
       # Only build:web is needed for the desktop userscript. It writes
       # build/web/kiss-translator.user.js alongside the web options page.
@@ -54,7 +58,12 @@ jobs:
       - name: Build userscript
         env:
           REACT_APP_VERSION: ${{ env.USERSCRIPT_VERSION }}
-          REACT_APP_USERSCRIPT_DOWNLOADURL: https://pc418.github.io/kiss-translator/kiss-translator.user.js
+          # NOT the Pages URL: this repo's Pages source is stuck on branch `dev`
+          # (Jekyll), so gh-pages files 404, and repointing it needs a Pages-admin
+          # token scope we don't have. raw.githubusercontent serves gh-pages
+          # directly with no settings change, and Tampermonkey installs/updates
+          # from raw URLs fine.
+          REACT_APP_USERSCRIPT_DOWNLOADURL: https://raw.githubusercontent.com/pc418/kiss-translator/gh-pages/kiss-translator.user.js
         run: pnpm build:web
 
       - name: Show generated metadata header
