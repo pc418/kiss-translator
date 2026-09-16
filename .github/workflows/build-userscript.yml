@@ -58,12 +58,12 @@ jobs:
       - name: Build userscript
         env:
           REACT_APP_VERSION: ${{ env.USERSCRIPT_VERSION }}
-          # NOT the Pages URL: this repo's Pages source is stuck on branch `dev`
-          # (Jekyll), so gh-pages files 404, and repointing it needs a Pages-admin
-          # token scope we don't have. raw.githubusercontent serves gh-pages
-          # directly with no settings change, and Tampermonkey installs/updates
-          # from raw URLs fine.
-          REACT_APP_USERSCRIPT_DOWNLOADURL: https://raw.githubusercontent.com/pc418/kiss-translator/gh-pages/kiss-translator.user.js
+          # Canonical install + auto-update URL. Requires Pages source to stay on
+          # branch `gh-pages` / `(root)` (Settings -> Pages). If that ever gets
+          # switched back to `dev`, every gh-pages file 404s and auto-update
+          # silently dies -- the fallback is the same file at
+          # https://raw.githubusercontent.com/pc418/kiss-translator/gh-pages/kiss-translator.user.js
+          REACT_APP_USERSCRIPT_DOWNLOADURL: https://pc418.github.io/kiss-translator/kiss-translator.user.js
         run: pnpm build:web
 
       - name: Show generated metadata header
