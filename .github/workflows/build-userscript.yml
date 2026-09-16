@@ -64,6 +64,17 @@ jobs:
           # silently dies -- the fallback is the same file at
           # https://raw.githubusercontent.com/pc418/kiss-translator/gh-pages/kiss-translator.user.js
           REACT_APP_USERSCRIPT_DOWNLOADURL: https://pc418.github.io/kiss-translator/kiss-translator.user.js
+          # The Settings menu does window.open(REACT_APP_OPTIONSPAGE)
+          # (src/libs/translatorManager.js:664,705). Left at its .env default it
+          # opens UPSTREAM's hosted options page (kiss-translator.rayjar.com),
+          # which is built from upstream's release and therefore lacks our
+          # newer controls (e.g. parseLatex) -- the script has the feature but
+          # the settings UI you see is someone else's build. Point it at our own
+          # Pages options page. This same var is also one of the entries in
+          # common.js isOptionsPageHref(), the allowlist that tells the script
+          # it is running on the settings page and may use the storage bridge,
+          # so overriding it here fixes both the open target and the allowlist.
+          REACT_APP_OPTIONSPAGE: https://pc418.github.io/kiss-translator/options.html
         run: pnpm build:web
 
       - name: Show generated metadata header
