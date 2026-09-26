@@ -27,7 +27,8 @@ import {
 } from "../../config";
 import { kissLog } from "../../libs/log";
 import PopupCont from "./PopupCont";
-import TranForm from "../Selection/TranForm";
+import TranslationPanelSurface from "../../components/TranslationPanel/Surface";
+import TranslationPanelContent from "../../components/TranslationPanel/Content";
 import { useSetting } from "../../hooks/Setting";
 import { useSeparateWindowBounds } from "../../hooks/SeparateWindowBounds";
 import { browser } from "../../libs/browser";
@@ -38,7 +39,7 @@ import {
 } from "../../libs/client";
 import { readClipboardTextIfAllowed } from "../../libs/clipboard";
 import { POPUP_STYLES } from "./styles";
-import { loadPopupData } from "./loadData";
+import { usePopupPage } from "./usePopupPage";
 import { REVIEW_URL, SUPPORT_URL } from "./supportLinks";
 
 /**
@@ -46,7 +47,7 @@ import { REVIEW_URL, SUPPORT_URL } from "./supportLinks";
  * Extension window bounds use screen pixels, while layout sizes must be scaled
  * by the tab zoom. DOM outer dimensions are not consistent across browsers.
  */
-function useFitSeparateWindow(enabled) {
+function useFitSeparateWindow(enabled, panelRef) {
   useEffect(() => {
     if (
       !enabled ||
@@ -77,7 +78,7 @@ function useFitSeparateWindow(enabled) {
 
         frame = requestAnimationFrame(() => {
           if (!active) return;
-          const panel = document.querySelector(".kt-popup-text-panel");
+          const panel = panelRef.current;
           if (!panel) return;
 
           // Gecko scales DOM outer/screen values with layout zoom. Its tab zoom
@@ -151,7 +152,7 @@ function useFitSeparateWindow(enabled) {
       active = false;
       if (frame !== undefined) cancelAnimationFrame(frame);
     };
-  }, [enabled]);
+  }, [enabled, panelRef]);
 }
 
 /**
@@ -159,6 +160,7 @@ function useFitSeparateWindow(enabled) {
  */
 export function Trantab({ isSeparate = false }) {
   useSeparateWindowBounds(isSeparate);
+  const panelRef = useRef(null);
   const [text, setText] = useState("");
   const i18n = useI18n();
   const { setting } = useSetting();
@@ -252,7 +254,10 @@ export function Trantab({ isSeparate = false }) {
   }, [isSeparate, translateClipboard]);
 
   // Wait for settings so the fixed 260px loading state cannot shrink the window.
-  useFitSeparateWindow(isSeparate && Boolean(setting?.tranboxSetting));
+  useFitSeparateWindow(
+    isSeparate && Boolean(setting?.tranboxSetting),
+    panelRef
+  );
 
   const serializedTransApis = useMemo(
     () =>
@@ -302,28 +307,29 @@ export function Trantab({ isSeparate = false }) {
   } = setting;
 
   return (
-    <div className="kt-popup-text-panel">
-      <TranForm
-        text={text}
-        setText={setText}
-        apiSlugs={apiSlugs}
-        fromLang={fromLang}
-        toLang={toLang}
-        toLang2={toLang2}
-        transApis={resolvedTransApis}
-        simpleStyle={false}
-        langDetector={langDetector}
-        enDict={enDict}
-        enSug={enSug}
-        aiDictApiSlug={aiDictApiSlug}
-        aiDictPromptSlug={aiDictPromptSlug}
-        prompts={prompts}
-        translateVariants={translateVariants}
-        parseLatex={parseLatex}
-        autoFocusInput={autoFocusInput}
-        syncExternalTextWhileEditing
-        popupStyle
-      />
+    <div className="kt-popup-text-panel" ref={panelRef}>
+      <TranslationPanelSurface embedded>
+        <TranslationPanelContent
+          text={text}
+          setText={setText}
+          apiSlugs={apiSlugs}
+          fromLang={fromLang}
+          toLang={toLang}
+          toLang2={toLang2}
+          transApis={resolvedTransApis}
+          simpleStyle={false}
+          langDetector={langDetector}
+          enDict={enDict}
+          enSug={enSug}
+          aiDictApiSlug={aiDictApiSlug}
+          aiDictPromptSlug={aiDictPromptSlug}
+          prompts={prompts}
+          translateVariants={translateVariants}
+          parseLatex={parseLatex}
+          autoFocusInput={autoFocusInput}
+          syncExternalTextWhileEditing
+        />
+      </TranslationPanelSurface>
     </div>
   );
 }
@@ -334,17 +340,49 @@ export default function Popup() {
   const previewMode =
     process.env.NODE_ENV === "development" &&
     new URLSearchParams(window.location.search).has("preview");
-  const [rule, setRule] = useState(null);
-  const [setting, setSetting] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState(() =>
     globalSetting?.popupDefaultView === OPT_POPUP_DEFAULT_VIEW_TEXT
       ? "text"
       : "page"
   );
-  const [isSeparate, setIsSeparate] = useState(
+  const [isSeparate] = useState(
     () => !previewMode && window.location.hash.slice(1) === "tranbox"
   );
+  const previewData = useMemo(() => {
+    if (!previewMode) return null;
+    return {
+      rule: { ...GLOBLA_RULE, transOpen: "true", textStyle: "dash_line" },
+      setting: {
+        ...DEFAULT_SETTING,
+        uiLang: "zh",
+        darkMode: "light",
+        tranboxSetting: { ...DEFAULT_SETTING.tranboxSetting, transOpen: true },
+        mouseHoverSetting: {
+          ...DEFAULT_SETTING.mouseHoverSetting,
+          useMouseHover: true,
+        },
+      },
+    };
+  }, [previewMode]);
+  const {
+    data,
+    tab,
+    generation,
+    isLoading,
+    setRule,
+    setSetting,
+    markUnavailable,
+  } = usePopupPage({
+    enabled: !isSeparate && !previewData,
+    initialData: previewData,
+  });
+  const {
+    rule,
+    setting,
+    capabilities,
+    isTopFrame,
+    document: documentInfo,
+  } = data || {};
   const popupShellRef = useRef(null);
   const initialPageTabRef = useRef(activeTab === "page");
   const activeTabRef = useRef(activeTab);
@@ -399,52 +437,6 @@ export default function Popup() {
     sendBgMsg(MSG_OPEN_OPTIONS);
   }, []);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        if (previewMode) {
-          setRule({
-            ...GLOBLA_RULE,
-            transOpen: "true",
-            textStyle: "dash_line",
-          });
-          setSetting({
-            ...DEFAULT_SETTING,
-            uiLang: "zh",
-            darkMode: "light",
-            tranboxSetting: {
-              ...DEFAULT_SETTING.tranboxSetting,
-              transOpen: true,
-            },
-            mouseHoverSetting: {
-              ...DEFAULT_SETTING.mouseHoverSetting,
-              useMouseHover: true,
-            },
-          });
-          return;
-        }
-        const cleanHash = window.location.hash.slice(1);
-        if (cleanHash === "tranbox") {
-          if (active) setIsSeparate(true);
-          return;
-        }
-        const response = await loadPopupData();
-        if (active && response && !response.error) {
-          setRule(response.rule);
-          setSetting(response.setting);
-        }
-      } catch (error) {
-        kissLog("query rule", error);
-      } finally {
-        if (active) setIsLoading(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [previewMode]);
-
   const openSeparateWindow = useCallback(() => {
     sendBgMsg(MSG_OPEN_SEPARATE_WINDOW);
     window.close();
@@ -456,13 +448,13 @@ export default function Popup() {
         value: "page",
         label: i18n("popup_page_translation"),
         tabId: "kt-popup-page-tab",
-        panelId: "kt-popup-active-panel",
+        panelId: "kt-popup-page-panel",
       },
       {
         value: "text",
         label: i18n("popup_text_translation"),
         tabId: "kt-popup-text-tab",
-        panelId: "kt-popup-active-panel",
+        panelId: "kt-popup-text-panel",
       },
     ],
     [i18n]
@@ -514,15 +506,23 @@ export default function Popup() {
         </Tabs>
       </div>
       <div
-        id="kt-popup-active-panel"
+        id="kt-popup-page-panel"
         role="tabpanel"
-        aria-labelledby={`kt-popup-${activeTab}-tab`}
+        aria-labelledby="kt-popup-page-tab"
         className="kt-popup-scroll"
+        hidden={activeTab !== "page"}
       >
-        {activeTab === "text" ? (
-          <Trantab />
-        ) : rule && setting ? (
+        {/* Page actions live as long as this document generation, including
+            while the user visits text translation and an action settles. */}
+        {rule && setting ? (
           <PopupCont
+            key={generation}
+            targetTab={tab}
+            documentInfo={documentInfo}
+            isVisible={activeTab === "page"}
+            onPageUnavailable={markUnavailable}
+            capabilities={capabilities}
+            isTopFrame={isTopFrame}
             rule={rule}
             setting={setting}
             setRule={setRule}
@@ -539,7 +539,7 @@ export default function Popup() {
           </div>
         ) : (
           <div className="kt-popup-empty">
-            <span>{i18n("load_setting_err")}</span>
+            <span>{i18n("popup_page_unavailable")}</span>
             <div className="kt-popup-empty__actions">
               <Button
                 variant="text"
@@ -564,6 +564,16 @@ export default function Popup() {
           </div>
         )}
       </div>
+      {activeTab === "text" && (
+        <div
+          id="kt-popup-text-panel"
+          role="tabpanel"
+          aria-labelledby="kt-popup-text-tab"
+          className="kt-popup-scroll"
+        >
+          <Trantab />
+        </div>
+      )}
     </main>
   );
 }

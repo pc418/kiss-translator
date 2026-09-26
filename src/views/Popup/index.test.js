@@ -4,7 +4,7 @@ import { useSetting } from "../../hooks/Setting";
 import { readClipboardTextIfAllowed } from "../../libs/clipboard";
 import Popup, { Trantab } from ".";
 import { browser } from "../../libs/browser";
-import { sendBgMsg } from "../../libs/msg";
+import { getCurTab, sendBgMsg } from "../../libs/msg";
 import { MSG_FIT_SEPARATE_WINDOW, STOKEY_SETTING } from "../../config";
 import { SEPARATE_WINDOW_CONTENT_WIDTH } from "../../config/app";
 import { loadPopupData } from "./loadData";
@@ -29,10 +29,12 @@ jest.mock("../../libs/browser", () => ({
   browser: {
     windows: {
       getCurrent: jest.fn(),
+      remove: jest.fn(),
     },
     tabs: {
       getCurrent: jest.fn(),
       getZoom: jest.fn(),
+      remove: jest.fn(),
     },
     storage: {
       onChanged: {
@@ -42,7 +44,10 @@ jest.mock("../../libs/browser", () => ({
     },
   },
 }));
-jest.mock("../../libs/msg", () => ({ sendBgMsg: jest.fn() }));
+jest.mock("../../libs/msg", () => ({
+  getCurTab: jest.fn(),
+  sendBgMsg: jest.fn(),
+}));
 jest.mock("./loadData", () => ({ loadPopupData: jest.fn() }));
 jest.mock("./PopupCont", () => {
   const React = require("react");
@@ -51,13 +56,19 @@ jest.mock("./PopupCont", () => {
 jest.mock("./Header", () => () => null);
 jest.mock("../Selection/TranForm", () => {
   const React = require("react");
-  return ({ text, autoFocusInput, syncExternalTextWhileEditing }) =>
+  return ({
+    text,
+    autoFocusInput,
+    syncExternalTextWhileEditing,
+    simpleStyle,
+  }) =>
     React.createElement(
       "div",
       {
         "data-testid": "tran-form",
         "data-auto-focus": String(autoFocusInput),
         "data-sync-external": String(syncExternalTextWhileEditing),
+        "data-simple-style": String(Boolean(simpleStyle)),
       },
       text
     );
@@ -286,6 +297,62 @@ describe("Trantab clipboard translation", () => {
 
 // Language, browser zoom, and system font size determine the rendered height.
 // Open at an initial size, then measure once and ask the background to fit it.
+describe("shared translation panel hosts", () => {
+  let view;
+
+  beforeEach(() => {
+    useSetting.mockReturnValue({ setting });
+    readClipboardTextIfAllowed.mockReset();
+    readClipboardTextIfAllowed.mockResolvedValue(null);
+    browser.tabs.getCurrent.mockResolvedValue({ id: 7 });
+    browser.tabs.remove.mockReset();
+    browser.windows.remove.mockReset();
+    browser.windows.getCurrent.mockResolvedValue({
+      id: 4,
+      type: "popup",
+      width: 760,
+      height: 800,
+    });
+  });
+
+  afterEach(() => {
+    if (view) {
+      act(() => view.root.unmount());
+      view.container.remove();
+    }
+  });
+
+  test("embeds the same content without an inner header or border in a separate window", async () => {
+    view = renderTrantab({ isSeparate: true });
+    await flushEffects();
+
+    expect(
+      view.container.querySelector(".kt-translation-panel--embedded")
+    ).not.toBeNull();
+    expect(view.container.querySelector(".kt-tranbox-content")).not.toBeNull();
+    expect(view.container.querySelector(".kt-tranbox-header")).toBeNull();
+    expect(
+      view.container.querySelector('[data-testid="tran-form"]').dataset
+        .simpleStyle
+    ).toBe("false");
+  });
+
+  test("embeds the same content without a second header in the popup tab", async () => {
+    view = renderTrantab();
+    await flushEffects();
+
+    expect(
+      view.container.querySelector(".kt-translation-panel--embedded")
+    ).not.toBeNull();
+    expect(view.container.querySelector(".kt-tranbox-content")).not.toBeNull();
+    expect(view.container.querySelector(".kt-tranbox-header")).toBeNull();
+    expect(
+      view.container.querySelector('[data-testid="tran-form"]').dataset
+        .simpleStyle
+    ).toBe("false");
+  });
+});
+
 describe("separate window auto-fit", () => {
   let container;
   let root;
@@ -362,6 +429,21 @@ describe("separate window auto-fit", () => {
     expect(action).toBe(MSG_FIT_SEPARATE_WINDOW);
     // 612px of content plus 40px of window chrome.
     expect(args.height).toBe(652);
+  });
+
+  test("measures the panel without an inner header", async () => {
+    await act(async () => root.render(<Trantab isSeparate />));
+    const panel = container.querySelector(".kt-popup-text-panel");
+    const form = container.querySelector(".kt-tranbox-content");
+    Object.defineProperty(form, "scrollHeight", { value: 500 });
+    Object.defineProperty(panel, "scrollHeight", { value: 528 });
+    expect(panel.querySelector(".kt-tranbox-header")).toBeNull();
+    act(() => rafCallbacks.forEach((callback) => callback()));
+
+    expect(sendBgMsg).toHaveBeenCalledWith(
+      MSG_FIT_SEPARATE_WINDOW,
+      expect.objectContaining({ height: 568 })
+    );
   });
 
   test("keeps width at the design cap rather than measuring it", async () => {
@@ -529,6 +611,11 @@ describe("Popup default view", () => {
 
   beforeEach(() => {
     window.location.hash = "";
+    getCurTab.mockResolvedValue({
+      id: 1,
+      windowId: 1,
+      url: "https://example.com",
+    });
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);

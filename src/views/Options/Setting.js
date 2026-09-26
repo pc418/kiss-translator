@@ -37,6 +37,7 @@ import {
   MSG_CONTEXT_MENUS,
   MSG_UPDATE_CSP,
   DEFAULT_HTTP_TIMEOUT,
+  getSettingVersion,
   OPT_LANGS_TO_REVERSED as OPT_LANGS_TO,
 } from "../../config";
 import { useShortcut } from "../../hooks/Shortcut";
@@ -255,10 +256,11 @@ export default function Settings() {
     }
   };
 
-  // 导入备份 JSON 配置文件
+  // Resolve the backup schema before merging with the current settings.
   const handleImport = async (data) => {
     try {
-      updateSetting(JSON.parse(data));
+      const imported = JSON.parse(data);
+      updateSetting({ ...imported, version: getSettingVersion(imported) });
     } catch (err) {
       kissLog("import setting", err);
     }
@@ -285,6 +287,7 @@ export default function Settings() {
     translateVariants = true,
     parseLatex = false,
     autoTranslateClipboard = false,
+    checkUpdate = true,
     popupDefaultView = OPT_POPUP_DEFAULT_VIEW_PAGE,
   } = setting;
   const normalizedPopupDefaultView = OPT_POPUP_DEFAULT_VIEW_ALL.includes(
@@ -576,6 +579,22 @@ export default function Settings() {
                     {name}
                   </MenuItem>
                 ))}
+              </TextField>
+            </Grid>
+            {/* 是否在进入设置页时自动检查更新 */}
+            <Grid item xs={12} sm={12} md={6} lg={6}>
+              <TextField
+                select
+                fullWidth
+                size="small"
+                name="checkUpdate"
+                value={checkUpdate}
+                label={i18n("check_update")}
+                helperText={i18n("check_update_helper")}
+                onChange={handleChange}
+              >
+                <MenuItem value={true}>{i18n("enable")}</MenuItem>
+                <MenuItem value={false}>{i18n("disable")}</MenuItem>
               </TextField>
             </Grid>
           </Grid>

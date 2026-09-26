@@ -64,32 +64,6 @@ describe("Safari popup sizing", () => {
 });
 
 describe("popup keyboard focus", () => {
-  test("uses the rounded container as the textarea focus indicator", () => {
-    expect(POPUP_STYLES).toMatch(
-      /\.kt-popup-translation-input--focused\s*\{[^}]*border-color:\s*var\(--kt-pri\);[^}]*outline:\s*3px solid var\(--kt-pri\);/
-    );
-    expect(POPUP_STYLES).not.toContain(
-      ".kt-popup-translation-input:focus-within"
-    );
-    expect(POPUP_STYLES).toMatch(
-      /\.kt-popup-translation-input textarea\s*\{[^}]*outline:\s*0;/
-    );
-    expect(POPUP_STYLES).toMatch(
-      /\.kt-m3-root \.kt-popup-translation-input textarea:focus\s*\{[^}]*outline:\s*none;/
-    );
-    const focusVisibleBodies = getCssAtRuleBodies(
-      POPUP_STYLES,
-      "@supports selector(:focus-visible)"
-    );
-    expect(
-      focusVisibleBodies.some((body) =>
-        /\.kt-m3-root \.kt-popup-translation-input textarea:focus-visible\s*\{[^}]*outline:\s*none;/.test(
-          body
-        )
-      )
-    ).toBe(true);
-  });
-
   test("uses a rounded keyboard-only ring for compact language selectors", () => {
     expect(POPUP_STYLES).toMatch(
       /\.kt-popup-language-select \.MuiSelect-select\s*\{[^}]*border-radius:\s*inherit;/
@@ -141,13 +115,9 @@ describe("popup translation controls", () => {
     const moreServiceRule = POPUP_STYLES.match(
       /\.kt-popup-more-service\s*\{([^}]*)\}/
     )?.[1];
-    const languageSelectRule = POPUP_STYLES.match(
-      /\.kt-popup-translation-direction \.kt-popup-language-select \.MuiSelect-select\s*\{([^}]*)\}/
-    )?.[1];
 
     expect(headerRule).toContain("padding: 7px 14px");
     expect(moreServiceRule).toContain("padding-inline: 10px");
-    expect(languageSelectRule).toContain("padding: 7px 28px !important");
   });
 
   test("uses a rounded, theme-aware language menu", () => {
@@ -179,28 +149,14 @@ describe("popup translation controls", () => {
     ).toBe(true);
   });
 
-  test("centers the translate action with symmetric vertical padding", () => {
-    const footerRule = POPUP_STYLES.match(
-      /\.kt-popup-translation-input__footer\s*\{([^}]*)\}/
-    )?.[1];
-
-    expect(footerRule).toContain("align-items: center");
-    expect(footerRule).toContain("padding: 7px 10px 7px 15px");
-  });
-
-  test("wraps scene labels and long translation output", () => {
+  test("wraps long scene labels", () => {
     const sceneLabelRule = POPUP_STYLES.match(
       /\.kt-popup-scene__label\s*\{([^}]*)\}/
-    )?.[1];
-    const resultBodyRule = POPUP_STYLES.match(
-      /\.kt-popup-translation-result__body\s*\{([^}]*)\}/
     )?.[1];
 
     expect(sceneLabelRule).toContain("white-space: normal");
     expect(sceneLabelRule).toContain("overflow-wrap: anywhere");
     expect(sceneLabelRule).not.toContain("text-overflow: ellipsis");
-    expect(resultBodyRule).toContain("overflow-wrap: anywhere");
-    expect(resultBodyRule).toContain("word-break: break-word");
   });
 
   test("rotates the more-services icon when expanded", () => {
@@ -220,24 +176,15 @@ describe("popup translation controls", () => {
     expect(moreStyleRule).not.toContain("margin:");
   });
 
-  test("uses restrained shapes while preserving semantic pill controls", () => {
+  test("uses restrained shapes for page translation controls", () => {
     const heroRule = POPUP_STYLES.match(/\.kt-popup-hero\s*\{([^}]*)\}/)?.[1];
     const serviceRule = POPUP_STYLES.match(
       /\.kt-popup-service\s*\{([^}]*)\}/
-    )?.[1];
-    const inputRule = POPUP_STYLES.match(
-      /\.kt-popup-translation-input\s*\{([^}]*)\}/
-    )?.[1];
-    const compareRule = POPUP_STYLES.match(
-      /\.kt-popup-translation-compare\s*\{([^}]*)\}/
     )?.[1];
 
     expect(heroRule).toContain("border-radius: 16px");
     expect(serviceRule).toContain("border-radius: 8px");
     expect(serviceRule).toContain("font-weight: 650");
-    expect(inputRule).toContain("overflow: visible");
-    expect(inputRule).toContain("border-radius: 16px");
-    expect(compareRule).toContain("border-radius: 999px");
     expect(POPUP_STYLES).toMatch(
       /\.kt-popup-site__select\s*\{[^}]*border-radius:\s*8px;/
     );
@@ -247,12 +194,12 @@ describe("popup translation controls", () => {
   });
 });
 
-// Keep the background full-width and the content centered with readable lines.
+// Keep the background and content panel full-width with fluid layout.
 describe("separate translation window layout", () => {
   const windowShellRule = POPUP_STYLES.match(
     /\.kt-popup-shell--window\s*\{([^}]*)\}/
   )?.[1];
-  const centeredRule = POPUP_STYLES.match(
+  const panelRule = POPUP_STYLES.match(
     /\.kt-popup-shell--window \.kt-popup-text-panel,[^{]*\{([^}]*)\}/
   )?.[1];
 
@@ -262,9 +209,9 @@ describe("separate translation window layout", () => {
     expect(windowShellRule).not.toMatch(/width:\s*min\(/);
   });
 
-  test("centers the content and caps how wide a line gets", () => {
-    expect(centeredRule).toContain("width: min(720px, 100%)");
-    expect(centeredRule).toContain("margin-inline: auto");
+  test("expands the content panel across the full window width", () => {
+    expect(panelRule).toContain("width: 100%");
+    expect(panelRule).not.toMatch(/width:\s*min\(/);
   });
 
   test("does not animate geometry while fitting the standalone window", () => {
