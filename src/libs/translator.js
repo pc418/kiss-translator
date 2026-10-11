@@ -9,7 +9,6 @@ import {
   DEFAULT_SETTING,
   // DEFAULT_MOUSEHOVER_KEY,
   OPT_STYLE_NONE,
-  DEFAULT_API_SETTING,
   DEFAULT_MOUSE_HOVER_BUBBLE_STYLE,
   DEFAULT_MOUSE_HOVER_HOLD_DELAY,
   OPT_HIGHLIGHT_WORDS_BEFORETRANS,
@@ -57,7 +56,9 @@ import { injectInternalCss } from "./injector";
 import { isExt } from "./client";
 import { sendBgMsg } from "./msg";
 import { getDocInfo } from "./docInfo";
-import { visitTranslationTargets } from "./translationTargets";
+import { isInNonContent, visitTranslationTargets } from "./translationTargets";
+import { normalizeRuleApi } from "./apiSelection";
+import { isSameStorageValue } from "./storageEquality";
 
 /**
  * @class Translator
@@ -65,6 +66,14 @@ import { visitTranslationTargets } from "./translationTargets";
  */
 // Only wrappers created by this runtime are trusted across instance recreation.
 const touchTranslationOwners = new WeakMap();
+
+function getRuntimeApiSettings(api) {
+  if (!api) return api;
+  const settings = { ...api };
+  delete settings.apiName;
+  delete settings.sortOrder;
+  return settings;
+}
 
 export class Translator {
   // 块级判定缓存，避免对同一节点高频调用 window.getComputedStyle(el) 造成浏览器回流（Reflow）
@@ -379,7 +388,7 @@ export class Translator {
   #rootNodes = new Set(); // 已监控的根节点
   #skipMoNodes = new WeakSet(); // 忽略变化的节点
   #ignoredMutationTargets = new WeakSet(); // 临时忽略扩展自身 DOM 调整产生的变化
-  #plainTextPreprocessingNodes = new WeakSet(); // 正在流式预处理的纯文本 pre
+  #plainTextPreprocessingNodes = new Map();
 
   #removeKeydownHandler; // 快捷键清理函数
   #removeKeydownHandler2; // 备用快捷键清理函数
@@ -521,7 +530,8 @@ export class Translator {
   #mo; // MutationObserver
   #dmm; // DebounceMouseMover
 
-  #rescanQueue = new Set(); // “脏容器”队列
+  // A discovery-only scan must not override an already queued content update.
+  #rescanQueue = new Map();
   #isQueueProcessing = false; // 队列处理状态标志
 
   #translationUpdates = [];
@@ -886,12 +896,13 @@ export class Translator {
   }
 
   #appendPlainTextPreBatch(pre, state, isInitialBatch = false) {
+    if (this.#plainTextPreprocessingNodes.get(pre) !== state) return;
     if (
       state.runId !== this.#runId ||
       !pre.isConnected ||
       !this.#rule.isPlainText
     ) {
-      this.#plainTextPreprocessingNodes.delete(pre);
+      this.#restorePlainTextPreSource(pre, state);
       return;
     }
 
@@ -956,6 +967,21 @@ export class Translator {
     }
   }
 
+  #restorePlainTextPreSource(pre, state) {
+    if (this.#plainTextPreprocessingNodes.get(pre) !== state) return;
+    this.#withIgnoredMutations([pre], () => {
+      pre.replaceChildren(document.createTextNode(state.source));
+      delete pre.dataset.kissPreprocessed;
+    });
+    this.#plainTextPreprocessingNodes.delete(pre);
+  }
+
+  #restorePendingPlainTextPreSources() {
+    for (const [pre, state] of this.#plainTextPreprocessingNodes) {
+      this.#restorePlainTextPreSource(pre, state);
+    }
+  }
+
   #initPlainTextPre(pre) {
     if (pre.dataset.kissPreprocessed === "true") {
       return;
@@ -970,7 +996,7 @@ export class Translator {
     };
 
     pre.dataset.kissPreprocessed = "true";
-    this.#plainTextPreprocessingNodes.add(pre);
+    this.#plainTextPreprocessingNodes.set(pre, state);
     pre.replaceChildren();
     this.#appendPlainTextPreBatch(pre, state, true);
   }
@@ -978,12 +1004,8 @@ export class Translator {
   // 接口参数
   // todo: 不用频繁查找计算
   get #apiSetting() {
-    // return (
-    //   this.#setting.transApis.find(
-    //     (api) => api.apiSlug === this.#rule.apiSlug
-    //   ) || DEFAULT_API_SETTING
-    // );
-    return this.#apisMap.get(this.#rule.apiSlug) || DEFAULT_API_SETTING;
+    const api = this.#apisMap.get(this.#rule.apiSlug);
+    return api && !api.isDisabled ? api : undefined;
   }
 
   // 气泡模式可使用独立接口；配置失效时继续跟随当前网页规则。
@@ -1077,11 +1099,14 @@ export class Translator {
 
   constructor({ rule = {}, setting = {}, favWords = [] }) {
     this.#setting = { ...Translator.DEFAULT_OPTIONS, ...setting };
-    this.#rule = {
-      ...Translator.DEFAULT_RULE,
-      ...rule,
-      isPlainText: rule.isPlainText === true || rule.isPlainText === "true",
-    };
+    this.#rule = normalizeRuleApi(
+      {
+        ...Translator.DEFAULT_RULE,
+        ...rule,
+        isPlainText: rule.isPlainText === true || rule.isPlainText === "true",
+      },
+      this.#setting.transApis
+    );
     this.#favWords = this.#dedupeFavoriteWords(favWords);
     this.#apisMap = new Map(
       this.#setting.transApis.map((api) => [api.apiSlug, api])
@@ -1159,7 +1184,7 @@ export class Translator {
     this.#initInjector();
 
     // 纯文本预处理
-    if (this.#rule.isPlainText) {
+    if (this.#rule.isPlainText && this.#apiSetting) {
       document.querySelectorAll("pre").forEach((pre) => {
         this.#initPlainTextPre(pre);
       });
@@ -1353,16 +1378,39 @@ export class Translator {
   // 监控页面动态变化
   #createMutationObserver() {
     return new MutationObserver((mutations) => {
+      const removedParents = new Map();
+      const insertedBeforeRemoval = new Set();
+      const changedTargets = new Set();
       for (const mutation of mutations) {
-        if (
-          this.#ignoredMutationTargets.has(mutation.target) ||
-          this.#skipMoNodes.has(mutation.target) ||
-          this.#plainTextPreprocessingNodes.has(mutation.target) ||
-          mutation.nextSibling?.tagName?.toLowerCase() ===
-            this.#translationTagName
-        ) {
-          continue;
+        if (this.#isIgnoredMutation(mutation)) continue;
+        if (mutation.type === "characterData") {
+          if (mutation.oldValue !== mutation.target.nodeValue) {
+            changedTargets.add(mutation.target);
+          }
+        } else if (mutation.type === "childList") {
+          for (const node of mutation.removedNodes) {
+            if (!removedParents.has(node)) removedParents.set(node, new Set());
+            removedParents.get(node).add(mutation.target);
+          }
+          for (const node of mutation.addedNodes) {
+            if (!removedParents.has(node)) insertedBeforeRemoval.add(node);
+          }
+          if (
+            Array.from(mutation.addedNodes).some(
+              (node) => !this.#isTranslationInsertion(node)
+            ) ||
+            // An externally removed wrapper also makes its host stale.
+            Array.from(mutation.removedNodes).some(
+              (node) => !this.#skipMoNodes.has(node)
+            )
+          ) {
+            changedTargets.add(mutation.target);
+          }
         }
+      }
+
+      for (const mutation of mutations) {
+        if (this.#isIgnoredMutation(mutation)) continue;
 
         if (mutation.type === "characterData") {
           if (
@@ -1374,13 +1422,31 @@ export class Translator {
         } else if (mutation.type === "childList") {
           let nodes = new Set();
           let hasText = false;
+          if (
+            Array.from(mutation.removedNodes).some((node) => {
+              if (this.#isTranslationInsertion(node)) {
+                return (
+                  !node.isConnected &&
+                  touchTranslationOwners.get(node) === mutation.target
+                );
+              }
+              // Independent blocks do not contribute to their parent's source.
+              // Inline/text removals must override a queued discovery-only scan.
+              return (
+                node.nodeType === Node.TEXT_NODE ||
+                (Translator.isElementOrFragment(node) &&
+                  !(
+                    this.#rule.autoScan === "true" &&
+                    this.#isBlockNode(node) &&
+                    this.#shouldBreak(node)
+                  ))
+              );
+            })
+          ) {
+            this.#queueForRescan(mutation.target);
+          }
           mutation.addedNodes.forEach((node) => {
-            if (
-              this.#skipMoNodes.has(node) ||
-              node.nodeName?.toLowerCase() === this.#translationTagName
-            ) {
-              return;
-            }
+            if (this.#isTranslationInsertion(node)) return;
 
             if (node.nodeType === Node.TEXT_NODE) {
               hasText = true;
@@ -1391,11 +1457,50 @@ export class Translator {
           if (hasText) {
             this.#queueForRescan(mutation.target);
           } else {
-            nodes.forEach((node) => this.#queueForRescan(node));
+            nodes.forEach((node) => {
+              const parents = removedParents.get(node);
+              // Same identity and same parent prove a reorder, not a clone or
+              // an insertion from outside the observed tree. Inline reorders,
+              // cross-parent moves and source edits still need invalidation.
+              const preserveTranslations =
+                parents?.size === 1 &&
+                parents.has(mutation.target) &&
+                !insertedBeforeRemoval.has(node) &&
+                node.parentNode === mutation.target &&
+                node.isConnected &&
+                this.#rule.autoScan === "true" &&
+                this.#isBlockNode(node) &&
+                this.#shouldBreak(node) &&
+                !Array.from(changedTargets).some((target) =>
+                  node.contains(target)
+                );
+              this.#queueForRescan(node, preserveTranslations);
+            });
           }
         }
       }
     });
+  }
+
+  #isTranslationInsertion(node) {
+    return (
+      this.#skipMoNodes.has(node) ||
+      node.nodeName?.toLowerCase() === this.#translationTagName
+    );
+  }
+
+  #isIgnoredMutation(mutation) {
+    const target = mutation.target;
+    return (
+      this.#ignoredMutationTargets.has(target) ||
+      (mutation.type === "characterData" &&
+        this.#ignoredMutationTargets.has(target.parentNode)) ||
+      this.#skipMoNodes.has(target) ||
+      this.#plainTextPreprocessingNodes.has(target) ||
+      this.#isKissIgnoredNode(
+        target.nodeType === Node.TEXT_NODE ? target.parentElement : target
+      )
+    );
   }
 
   #withIgnoredMutations(targets, callback) {
@@ -1905,6 +2010,7 @@ export class Translator {
     let current;
     while ((current = walker.nextNode())) {
       if (!current.nodeValue?.trim()) continue;
+      if (isInNonContent(current)) continue;
       if (leaf) return null; // 存在多个非空文本节点时不下钻
       leaf = current.parentElement;
     }
@@ -1926,6 +2032,7 @@ export class Translator {
     while ((current = walker.nextNode())) {
       const text = current.nodeValue?.trim() || "";
       if (!text) continue;
+      if (isInNonContent(current)) continue;
       if (
         current.parentElement?.closest?.(`.${Translator.KISS_CLASS.warpper}`)
       ) {
@@ -2375,15 +2482,17 @@ export class Translator {
   }
 
   // “脏容器”队列
-  #queueForRescan(target) {
-    this.#rescanQueue.add(target);
+  #queueForRescan(target, preserveTranslations = false) {
+    if (!this.#rescanQueue.has(target) || !preserveTranslations) {
+      this.#rescanQueue.set(target, preserveTranslations);
+    }
     if (!this.#isQueueProcessing) {
       this.#isQueueProcessing = true;
       // 开关翻译不取消 DOM 扫描；仅重建扫描状态时废弃旧队列。
       const queue = this.#rescanQueue;
       scheduleIdle(() => {
         if (queue !== this.#rescanQueue || this.#editorPaused) return;
-        queue.forEach((t) => this.#rescanContainer(t));
+        queue.forEach((preserve, t) => this.#rescanContainer(t, preserve));
         queue.clear();
         this.#isQueueProcessing = false;
       }, 100);
@@ -2391,15 +2500,18 @@ export class Translator {
   }
 
   // 处理“脏容器”
-  #rescanContainer(changedNode) {
+  #rescanContainer(changedNode, preserveTranslations = false) {
     // DOM 发生变化，按住翻译的区域单元缓存不再可靠，全部失效
     this.#holdUnitsCache = new WeakMap();
 
     const container = this.#findChangeContainer(changedNode);
     if (!container) return;
 
-    this.#processedNodes.delete(container); // 删除处理状态，允许重新翻译
-    this.#cleanupAllTranslations(container);
+    if (!preserveTranslations) {
+      this.#processedNodes.delete(container); // 删除处理状态，允许重新翻译
+      this.#cleanupAllTranslations(container);
+    }
+    // Even a reorder scans for previously undiscovered translation targets.
     this.#scanNode(container);
   }
 
@@ -2583,6 +2695,7 @@ export class Translator {
   // 处理一个待翻译的节点
   async #processNode(node, options = {}) {
     if (
+      !this.#apiSetting ||
       this.#processedNodes.has(node) ||
       !Translator.isElementOrFragment(node)
     ) {
@@ -2628,6 +2741,7 @@ export class Translator {
       if (
         (options.valid && !options.valid()) ||
         runId !== this.#runId ||
+        this.#processedNodes.get(node) !== appliedRule ||
         this.#editorPaused ||
         (generation !== undefined && generation !== this.#holdGeneration)
       ) {
@@ -2733,7 +2847,10 @@ export class Translator {
     });
 
     if (newNodes.length > 0) {
-      textNode.replaceWith(...newNodes);
+      // Marking new nodes alone does not suppress removal of the old source.
+      this.#withIgnoredMutations([textNode.parentNode], () =>
+        textNode.replaceWith(...newNodes)
+      );
     }
   }
 
@@ -2846,8 +2963,11 @@ export class Translator {
     highlights.forEach((highlight) => {
       const textNode = document.createTextNode(highlight.textContent || "");
       this.#skipMoNodes.add(textNode);
-      highlight.replaceWith(textNode);
-      this.#mergeFavoriteHighlightText(textNode);
+      // Merging can remove an adjacent source node that was never highlighted.
+      this.#withIgnoredMutations([highlight.parentNode], () => {
+        highlight.replaceWith(textNode);
+        this.#mergeFavoriteHighlightText(textNode);
+      });
     });
   }
 
@@ -2914,7 +3034,10 @@ export class Translator {
         return newNode;
       });
 
-      node.replaceWith(...newNodes);
+      // Sentence splitting changes DOM structure without changing the source.
+      this.#withIgnoredMutations([parentNode], () =>
+        node.replaceWith(...newNodes)
+      );
     });
 
     const sentenceEndRegexForTest = /(?:[。！？?!]+|(?<!\d)\.)\s*$/;
@@ -2942,7 +3065,7 @@ export class Translator {
         br.className = Translator.KISS_CLASS.br;
         this.#skipMoNodes.add(br);
 
-        node.after(br);
+        this.#withIgnoredMutations([parentNode], () => node.after(br));
       }
     });
   }
@@ -2977,6 +3100,7 @@ export class Translator {
   // 判断是否需要换行
   #shouldBreak(node) {
     if (!Translator.isElementOrFragment(node)) return false;
+    if (isInNonContent(node)) return true;
 
     let matchesKeepSelector = false;
     try {
@@ -3923,6 +4047,10 @@ overflow-wrap: anywhere !important;`;
   // 气泡模式下翻译目标节点，处理请求竞态与错误边界
   async #translateHoverBubbleNode(node) {
     this.#clearHoverOriginalTimer();
+    if (!this.#hoverBubbleApiSetting) {
+      this.#hideHoverBubble();
+      return;
+    }
     if (!Translator.isElementOrFragment(node)) return;
     if (this.#hoverBubbleTarget === node && this.#hoverBubbleNode) return;
 
@@ -3956,6 +4084,13 @@ overflow-wrap: anywhere !important;`;
           }
           return;
         }
+      }
+
+      if (
+        this.#hoverBubbleRunId !== currentRunId ||
+        this.#hoverBubbleTarget !== node
+      ) {
+        return;
       }
 
       const { trText, isSame } = await this.#translateFetch(
@@ -4016,6 +4151,7 @@ overflow-wrap: anywhere !important;`;
 
       // 文本节点
       if (node.nodeType === Node.TEXT_NODE) {
+        if (isInNonContent(node)) return "";
         let text = node.textContent;
         if (!text.trim()) return "";
 
@@ -4040,6 +4176,8 @@ overflow-wrap: anywhere !important;`;
 
       // 元素节点
       if (node.nodeType === Node.ELEMENT_NODE) {
+        if (isInNonContent(node)) return "";
+
         // 收藏词高亮只影响原文显示，不应改变翻译请求的结构
         if (node.classList.contains(Translator.KISS_CLASS.highlight)) {
           return Array.from(node.childNodes, traverse).join("");
@@ -4081,6 +4219,8 @@ overflow-wrap: anywhere !important;`;
             kissLog("traverse child error", child.nodeName, err);
           }
         });
+
+        if (!innerContent) return "";
 
         if (
           this.#rule.hasRichText === "true" &&
@@ -4209,7 +4349,13 @@ overflow-wrap: anywhere !important;`;
   ) {
     const { toLang, transStartHook } = this.#rule;
     const fromLang = deLang || this.#rule.fromLang;
-    const rawApiSetting = { ...(apiSettingOverride || this.#apiSetting) };
+    const selectedApi = apiSettingOverride || this.#apiSetting;
+    if (!selectedApi || selectedApi.isDisabled) {
+      return Promise.reject(
+        new Error("No enabled translation service is available.")
+      );
+    }
+    const rawApiSetting = { ...selectedApi };
 
     const apiSetting = resolveApiPromptSettings(
       rawApiSetting,
@@ -4280,7 +4426,12 @@ overflow-wrap: anywhere !important;`;
     });
 
     this.#withViewportAnchor(() => {
-      wrappers.forEach((el) => this.#removeTranslationElement(el));
+      // Cleanup normalizes adjacent source text; that is our own write, not a
+      // second page edit requiring another translation request.
+      this.#withIgnoredMutations(
+        wrappers.map((wrapper) => wrapper.parentNode),
+        () => wrappers.forEach((el) => this.#removeTranslationElement(el))
+      );
     }, excludedAnchors);
   }
 
@@ -4410,6 +4561,8 @@ overflow-wrap: anywhere !important;`;
       child.classList?.contains(Translator.KISS_CLASS.warpper)
     );
     if (!wrappers.length) return false;
+    // Rediscovery must retain the processing token used by pending DOM writes.
+    if (this.#processedNodes.has(hostNode)) return true;
 
     wrappers.forEach((wrapper) => {
       if (touchTranslationOwners.has(wrapper))
@@ -4707,7 +4860,7 @@ overflow-wrap: anywhere !important;`;
   // 停止监听，重置参数
   #resetOptions() {
     this.#cancelTranslationUpdates();
-    this.#rescanQueue = new Set();
+    this.#rescanQueue = new Map();
     this.#isQueueProcessing = false;
     // 停止/重扫会清理实例状态，语言检测中的按住任务必须立即过期
     this.#holdGeneration += 1;
@@ -4715,6 +4868,7 @@ overflow-wrap: anywhere !important;`;
 
     this.#io.disconnect();
     this.#mo.disconnect();
+    this.#restorePendingPlainTextPreSources();
     this.#viewNodes.clear();
     this.#rootNodes.clear();
     this.#favoriteHighlightScopes.clear();
@@ -4723,7 +4877,7 @@ overflow-wrap: anywhere !important;`;
     this.#translationNodes = new WeakMap();
     this.#processedNodes = new WeakMap();
     this.#holdProcessGenerations = new WeakMap();
-    this.#plainTextPreprocessingNodes = new WeakSet();
+    this.#plainTextPreprocessingNodes = new Map();
     this.#ignoredMutationTargets = new WeakSet();
     this.#io = this.#createIntersectionObserver();
   }
@@ -4970,9 +5124,15 @@ overflow-wrap: anywhere !important;`;
     this.#enabled = true;
     this.#rule.transOpen = "true";
     this.#runId++;
+    this.#restorePendingPlainTextPreSources();
 
     if (this.#isInitialized) {
-      if (this.#transAllnow) {
+      if (
+        this.#transAllnow ||
+        (this.#rule.isPlainText &&
+          this.#apiSetting &&
+          document.querySelector('pre:not([data-kiss-preprocessed="true"])'))
+      ) {
         this.rescan();
       } else {
         this.#reIOViewNodes();
@@ -4990,6 +5150,7 @@ overflow-wrap: anywhere !important;`;
 
   // 翻译页面标题
   async #translateTitle() {
+    if (!this.#apiSetting) return;
     const runId = this.#runId;
     const docInfo = getDocInfo();
     if (!docInfo?.title) return;
@@ -5016,6 +5177,7 @@ overflow-wrap: anywhere !important;`;
     this.#holdGeneration += 1;
 
     this.#cleanupAllNodes();
+    this.#restorePendingPlainTextPreSources();
     clearFetchPool();
     clearAllBatchQueue();
 
@@ -5099,7 +5261,12 @@ overflow-wrap: anywhere !important;`;
   }
 
   // 更新规则
-  updateRule(newRule) {
+  updateRule(newRule, apiState = {}) {
+    const effectiveRule = normalizeRuleApi(
+      { ...this.#rule, ...newRule },
+      this.#setting.transApis
+    );
+    newRule = { ...newRule, apiSlug: effectiveRule.apiSlug };
     if (Object.prototype.hasOwnProperty.call(newRule, "isPlainText")) {
       newRule = {
         ...newRule,
@@ -5109,8 +5276,8 @@ overflow-wrap: anywhere !important;`;
     }
     let hasChanged = false;
     let needsRescan = false;
-    const oldTransAllnow = this.#transAllnow;
-    const oldRootMargin = this.#rootMargin;
+    const oldTransAllnow = apiState.oldTransAllnow ?? this.#transAllnow;
+    const oldRootMargin = apiState.oldRootMargin ?? this.#rootMargin;
     for (const key in newRule) {
       if (
         Object.prototype.hasOwnProperty.call(this.#rule, key) &&
@@ -5161,6 +5328,7 @@ overflow-wrap: anywhere !important;`;
         String(oldRootMargin) !== String(this.#rootMargin));
 
     if (
+      apiState.forceRescan ||
       needsRescan ||
       needsTriggerRescan ||
       (this.#enabled && this.#transAllnow)
@@ -5173,6 +5341,68 @@ overflow-wrap: anywhere !important;`;
     if (hasChanged) {
       this.#reIOViewNodes();
       this.#syncTransOnlyRevert();
+    }
+  }
+
+  updateApiSettings(transApis) {
+    if (
+      !Array.isArray(transApis) ||
+      transApis.some(
+        (api) =>
+          !api ||
+          typeof api !== "object" ||
+          Array.isArray(api) ||
+          typeof api.apiSlug !== "string" ||
+          !api.apiSlug.trim()
+      )
+    ) {
+      return;
+    }
+
+    const oldApi = this.#apiSetting;
+    const oldHoverApi = this.#hoverBubbleApiSetting;
+    const oldTransAllnow = this.#transAllnow;
+    const oldRootMargin = this.#rootMargin;
+    const nextApis = transApis.map((api) => ({ ...api }));
+    this.#setting = { ...this.#setting, transApis: nextApis };
+    this.#apisMap = new Map(nextApis.map((api) => [api.apiSlug, api]));
+    const nextRule = normalizeRuleApi(this.#rule, nextApis);
+    const nextApi = this.#apisMap.get(nextRule.apiSlug);
+    const enabledApi = nextApi && !nextApi.isDisabled ? nextApi : undefined;
+    const selectionChanged = oldApi?.apiSlug !== enabledApi?.apiSlug;
+    const hoverApiSlug = this.#setting.mouseHoverSetting?.apiSlug;
+    const hoverApi =
+      hoverApiSlug && hoverApiSlug !== GLOBAL_KEY
+        ? this.#apisMap.get(hoverApiSlug)
+        : undefined;
+    const nextHoverApi =
+      hoverApi && !hoverApi.isDisabled ? hoverApi : enabledApi;
+    const apiSettingsChanged =
+      !isSameStorageValue(
+        getRuntimeApiSettings(oldApi),
+        getRuntimeApiSettings(enabledApi)
+      ) ||
+      !isSameStorageValue(
+        getRuntimeApiSettings(oldHoverApi),
+        getRuntimeApiSettings(nextHoverApi)
+      );
+
+    this.#hideHoverBubble();
+    this.updateRule(
+      { apiSlug: nextRule.apiSlug },
+      {
+        forceRescan: selectionChanged || apiSettingsChanged,
+        oldTransAllnow,
+        oldRootMargin,
+      }
+    );
+
+    if (
+      (selectionChanged || apiSettingsChanged) &&
+      this.#rule.transTitle === "true"
+    ) {
+      if (this.#docInfo.title) document.title = this.#docInfo.title;
+      if (enabledApi && this.#enabled) this.#translateTitle();
     }
   }
 

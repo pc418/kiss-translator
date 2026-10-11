@@ -1,3 +1,4 @@
+import { POPUP_I18N } from "./i18n.popup";
 import { TOUCH_I18N } from "./i18n.touch";
 /**
  * @file i18n.js
@@ -2323,6 +2324,7 @@ const TERMINOLOGY_PLAYGROUND_I18N = {
 };
 
 export const I18N = {
+  ...POPUP_I18N,
   ...TOUCH_I18N,
   ...SETTINGS_I18N,
   ...RULE_EDITOR_I18N,
@@ -4599,6 +4601,33 @@ export const I18N = {
     tr: `Yüzen Eylem Düğmesini Gizle`,
     vi: "Ẩn nút nổi",
   },
+  fab_always_show: {
+    zh: `始终显示悬浮按钮`,
+    en: `Always show floating button`,
+    zh_TW: `始終顯示浮動按鈕`,
+    ja: `フローティングボタンを常に表示`,
+    ko: `플로팅 버튼 항상 표시`,
+    tr: `Yüzen düğmeyi her zaman göster`,
+    vi: `Luôn hiển thị nút nổi`,
+  },
+  fab_turn_off: {
+    zh: `关闭悬浮按钮`,
+    en: `Turn off floating button`,
+    zh_TW: `關閉浮動按鈕`,
+    ja: `フローティングボタンを非表示`,
+    ko: `플로팅 버튼 끄기`,
+    tr: `Yüzen düğmeyi kapat`,
+    vi: `Tắt nút nổi`,
+  },
+  fab_hidden_shortcut_hint: {
+    zh: `悬浮按钮已关闭。可以使用 Alt+B 临时呼出悬浮按钮。`,
+    en: `The floating button is turned off. Press Alt+B to temporarily show it.`,
+    zh_TW: `浮動按鈕已關閉。可以使用 Alt+B 暫時叫出浮動按鈕。`,
+    ja: `フローティングボタンを非表示にしました。Alt+B で一時的に表示できます。`,
+    ko: `플로팅 버튼이 꺼졌습니다. Alt+B를 눌러 일시적으로 표시할 수 있습니다.`,
+    tr: `Yüzen düğme kapatıldı. Geçici olarak göstermek için Alt+B tuşlarına basın.`,
+    vi: `Nút nổi đã tắt. Nhấn Alt+B để tạm thời hiển thị nút.`,
+  },
   fab_exception_list: {
     zh: `悬浮按钮特例名单`,
     en: `Fab Button Exception List`,
@@ -4644,6 +4673,15 @@ export const I18N = {
     tr: `Çevir`,
     vi: "Dịch",
   },
+  fab_click_popup: {
+    zh: `打开翻译面板`,
+    en: `Open Translation Panel`,
+    zh_TW: `開啟翻譯面板`,
+    ja: `翻訳パネルを開く`,
+    ko: `번역 패널 열기`,
+    tr: `Çeviri Panelini Aç`,
+    vi: "Mở bảng dịch",
+  },
   hide_tran_button: {
     zh: `隐藏翻译按钮`,
     en: `Hide Translate Button`,
@@ -4654,13 +4692,13 @@ export const I18N = {
     vi: "Ẩn nút dịch",
   },
   hide_click_away: {
-    zh: `点击外部关闭弹窗`,
-    en: `Click outside to close the pop-up window`,
-    zh_TW: `點選外部區域關閉彈出視窗`,
-    ja: `外部クリックでポップアップを閉じる`,
-    ko: `바깥쪽 클릭 시 팝업 닫기`,
-    tr: `Açılır Pencereyi Kapatmak İçin Dışarıyı Tıklayın`,
-    vi: "Nhấp bên ngoài để đóng cửa sổ bật lên",
+    zh: `失去焦点时隐藏弹窗`,
+    en: `Hide the panel when focus is lost`,
+    zh_TW: `失去焦點時隱藏彈出視窗`,
+    ja: `フォーカスを失ったときにパネルを非表示`,
+    ko: `포커스를 잃으면 패널 숨기기`,
+    tr: `Odak kaybolduğunda paneli gizle`,
+    vi: "Ẩn bảng khi mất tiêu điểm",
   },
   use_simple_style: {
     zh: `使用简洁界面`,
@@ -5579,6 +5617,15 @@ export const I18N = {
     ko: `설정 검색`,
     tr: `Ayarlarda ara`,
     vi: `Tìm trong cài đặt`,
+  },
+  options_clear_search: {
+    zh: `退出搜索`,
+    en: `Clear search`,
+    zh_TW: `退出搜尋`,
+    ja: `検索をクリア`,
+    ko: `검색 지우기`,
+    tr: `Aramayı temizle`,
+    vi: `Xóa tìm kiếm`,
   },
   options_open_navigation: {
     zh: `打开设置导航`,
@@ -7213,13 +7260,13 @@ export const I18N = {
     vi: "To import vocabulary, please use a txt file with one word per line.",
   },
   btn_tip_click_away: {
-    zh: `失焦隐藏/显示`,
-    en: `Loss of focus hide/show`,
-    zh_TW: `失焦隱藏/顯示`,
-    ja: `フォーカスを失った時に非表示/表示`,
-    ko: `포커스 잃을 시 숨기기/표시`,
-    tr: `Odak Kaybında Gizle/Göster`,
-    vi: "Loss of focus hide/show",
+    zh: `固定弹窗（取消固定后失焦隐藏）`,
+    en: `Pin panel (unpin to hide on focus loss)`,
+    zh_TW: `固定彈出視窗（取消固定後失焦隱藏）`,
+    ja: `パネルを固定（固定解除後はフォーカスを失うと非表示）`,
+    ko: `패널 고정 (고정 해제 시 포커스를 잃으면 숨김)`,
+    tr: `Paneli sabitle (sabitlemeyi kaldırınca odak kaybında gizle)`,
+    vi: "Ghim bảng (bỏ ghim để ẩn khi mất tiêu điểm)",
   },
   btn_tip_follow_selection: {
     zh: `跟随/固定模式`,
