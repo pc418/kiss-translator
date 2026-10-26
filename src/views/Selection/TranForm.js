@@ -1,3 +1,4 @@
+import { isApiConfigured } from "../../config/serviceSelection";
 import Stack from "@mui/material/Stack";
 import TextField from "@mui/material/TextField";
 import Tabs from "@mui/material/Tabs";
@@ -20,7 +21,6 @@ import {
   OPT_LANGS_MAP,
   OPT_DICT_MAP,
   OPT_SUG_MAP,
-  API_SPE_TYPES,
   PROMPT_CATEGORY_DICTIONARY,
   PROMPT_MODE_FOLLOW_API,
   findPromptBySlug,
@@ -41,11 +41,15 @@ import SugCont from "./SugCont";
 import CopyBtn from "./CopyBtn";
 import Zdic from "./Zdic";
 import { isValidWord, isSingleChineseChar } from "../../libs/utils";
-import { kissLog } from "../../libs/log";
+import { logger } from "../../libs/log";
 import { tryDetectLang } from "../../libs/detect";
 import { isSameTranslationLanguage } from "../../libs/language";
 import { createMenuKeyDownHandler } from "../../libs/menuFocus";
 import { isShadowHostMoving } from "../../libs/shadowHost";
+import {
+  isApiAvailableFor,
+  supportsApiCapability,
+} from "../../config/serviceSelection";
 import TextareaResizeGrip from "../../components/TextareaResizeGrip";
 import useTextareaHeightLock, {
   useTextareaGripStyle,
@@ -128,8 +132,10 @@ export default function TranForm({
   enSug: initEnSug = "-",
   aiDictApiSlug = "-",
   aiDictPromptSlug = PROMPT_MODE_FOLLOW_API,
+  ttsApiSlug = "",
   prompts = [],
   selectionContext = "",
+  selectionSource = null,
   isPlaygound = false,
   autoFocusInput = true,
   syncExternalTextWhileEditing = false,
@@ -150,6 +156,41 @@ export default function TranForm({
   // Keep draft input until blur or submission updates the outer text state.
   const [editText, setEditText] = useState(text);
   const editTextRef = useRef(editText);
+  // Source validity belongs to the selection snapshot, not to the current text.
+  // This prevents a manually edited word from restoring its old source when the
+  // draft is changed back to the selected text. External text synchronization
+  // never calls invalidateFavoriteSource; a new snapshot resets the ref below.
+  const favoriteSourceSnapshotRef = useRef(selectionSource);
+  const favoriteSourceInvalidatedRef = useRef(false);
+  const favoriteSourceSnapshotChanged =
+    favoriteSourceSnapshotRef.current !== selectionSource;
+  useLayoutEffect(() => {
+    favoriteSourceSnapshotRef.current = selectionSource;
+    favoriteSourceInvalidatedRef.current = false;
+  }, [selectionSource]);
+  const invalidateFavoriteSource = useCallback(() => {
+    if (favoriteSourceSnapshotRef.current) {
+      favoriteSourceInvalidatedRef.current = true;
+    }
+  }, []);
+  const favoriteSource = useMemo(() => {
+    const selectedText = String(selectionSource?.text || "").trim();
+    const currentText = String(text || "").trim();
+    const draftText = String(editText || "").trim();
+    if (
+      (!favoriteSourceSnapshotChanged &&
+        favoriteSourceInvalidatedRef.current) ||
+      !selectedText ||
+      selectedText !== currentText ||
+      draftText !== currentText
+    ) {
+      return null;
+    }
+
+    const sentence = String(selectionSource?.sentence || "").trim();
+    const url = String(selectionSource?.url || "").trim();
+    return sentence || url ? { sentence, url } : null;
+  }, [editText, favoriteSourceSnapshotChanged, selectionSource, text]);
   const [requestRevision, setRequestRevision] = useState(0);
   const [apiSlugs, setApiSlugs] = useState(initApiSlugs);
   const [hasUserChangedApiSlugs, setHasUserChangedApiSlugs] = useState(false);
@@ -201,11 +242,14 @@ export default function TranForm({
       releaseHeight();
     }
   }, [editText, releaseHeight]);
-  const setInputRef = useCallback((input) => {
-    inputRef.current = input;
-    textareaRef.current = input;
-    setIsShadowMenu(Boolean(input?.getRootNode()?.host));
-  }, [textareaRef]);
+  const setInputRef = useCallback(
+    (input) => {
+      inputRef.current = input;
+      textareaRef.current = input;
+      setIsShadowMenu(Boolean(input?.getRootNode()?.host));
+    },
+    [textareaRef]
+  );
   const selectMenuProps = useMemo(
     () => ({
       container: () => inputRef.current?.closest(".kt-m3-root"),
@@ -325,7 +369,7 @@ export default function TranForm({
         }
       } catch (err) {
         if (active) {
-          kissLog("tranbox: detect lang", err);
+          logger.child("tran-form").warn("tranbox: detect lang", err);
           setDetection({ key: detectionKey, lang: "", loading: false });
         }
       }
@@ -341,6 +385,9 @@ export default function TranForm({
     try {
       const pastedText = (await navigator.clipboard.readText()).trim();
       // Pasting replaces the draft even while focus stays in the text controls.
+      if (pastedText !== editTextRef.current) {
+        invalidateFavoriteSource();
+      }
       setEditText(pastedText);
       setText(pastedText);
     } catch (err) {
@@ -366,7 +413,7 @@ export default function TranForm({
   const optApis = useMemo(
     () =>
       transApis
-        .filter((api) => !api.isDisabled)
+        .filter((api) => isApiAvailableFor(api, "translate"))
         .map((api) => ({
           key: api.apiSlug,
           name: api.apiName || api.apiSlug,
@@ -427,7 +474,8 @@ export default function TranForm({
       (api) =>
         api.apiSlug === aiDictApiSlug &&
         !api.isDisabled &&
-        API_SPE_TYPES.ai.has(api.apiType)
+        isApiConfigured(api) &&
+        supportsApiCapability(api, "dictionary")
     );
     if (!apiSetting) {
       return null;
@@ -436,6 +484,11 @@ export default function TranForm({
     // Following the API requires a resolved, nonblank dictPrompt.
     // Empty prompts would create a billed request without useful instructions.
     if (aiDictPromptSlug === PROMPT_MODE_FOLLOW_API) {
+      if (
+        apiSetting.provider?.implementation.kind !== "native" &&
+        apiSetting.provider
+      )
+        return apiSetting;
       return hasPrompt(apiSetting.dictPrompt) ? apiSetting : null;
     }
 
@@ -533,6 +586,7 @@ export default function TranForm({
 
   const translationResults = activeApiSlugs.map((slug) => (
     <TranCont
+      ttsApiSlug={ttsApiSlug}
       key={slug}
       text={translationText}
       fromLang={fromLang}
@@ -811,7 +865,7 @@ export default function TranForm({
                         inputProps={{ "aria-busy": deLoading }}
                         InputProps={{
                           readOnly: true,
-                          startAdornment: (
+                          startAdornment: deLoading ? (
                             <Box
                               sx={{
                                 width: 16,
@@ -820,14 +874,12 @@ export default function TranForm({
                                 placeItems: "center",
                               }}
                             >
-                              {deLoading && (
-                                <CircularProgress
-                                  size={16}
-                                  aria-label={i18n("detected_lang")}
-                                />
-                              )}
+                              <CircularProgress
+                                size={16}
+                                aria-label={i18n("detected_lang")}
+                              />
                             </Box>
-                          ),
+                          ) : null,
                         }}
                       />
                     </Grid>
@@ -878,6 +930,7 @@ export default function TranForm({
               }}
               value={editText}
               onChange={(e) => {
+                invalidateFavoriteSource();
                 setEditText(e.target.value);
               }}
               onFocus={() => {
@@ -1038,7 +1091,11 @@ export default function TranForm({
                   aria-labelledby={defaultDictionaryTabId}
                 >
                   {isWord && OPT_DICT_MAP.has(enDict) && (
-                    <DictCont text={text} enDict={enDict} />
+                    <DictCont
+                      text={text}
+                      enDict={enDict}
+                      source={favoriteSource}
+                    />
                   )}
                   {isSingleChineseChar(text) && <Zdic text={text} />}
                 </Box>
@@ -1050,11 +1107,13 @@ export default function TranForm({
                   aria-labelledby={aiDictionaryTabId}
                 >
                   <AiDictCont
+                    ttsApiSlug={ttsApiSlug}
                     text={text}
                     fromLang={fromLang}
                     speechLang={fromLang === "auto" ? deLang : fromLang}
                     toLang={realToLang}
                     apiSetting={aiDictApiSetting}
+                    requestRevision={requestRevision}
                     context={
                       // Pass context only when it contains the current text, so manual input cannot reuse stale selection context.
                       selectionContext && selectionContext.includes(text)
@@ -1068,7 +1127,7 @@ export default function TranForm({
           ) : (
             <>
               {isWord && OPT_DICT_MAP.has(enDict) && (
-                <DictCont text={text} enDict={enDict} />
+                <DictCont text={text} enDict={enDict} source={favoriteSource} />
               )}
               {isSingleChineseChar(text) && <Zdic text={text} />}
             </>

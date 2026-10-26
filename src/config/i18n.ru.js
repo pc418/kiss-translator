@@ -511,8 +511,8 @@ export const RU_I18N = {
   if_pre_init: `Предварительная инициализация`,
   export_old: `Экспорт в старом формате`,
   favorite_words_helper: `Для импорта словаря используйте txt-файл: одно слово в строке.`,
-  btn_tip_click_away: `Закрепить панель (после открепления скрывается при потере фокуса)`,
-  btn_tip_follow_selection: `Режим следования / фиксации`,
+  btn_tip_click_away: `Закрепить панель (не скрывается при потере фокуса)`,
+  btn_tip_follow_selection: `Следовать за выделенным текстом`,
   btn_tip_simple_style: `Компактный / обычный режим`,
   btn_tip_dark_mode: `Светлая / тёмная / авто`,
   api_placeholder: `Плейсхолдер`,
@@ -645,5 +645,6 @@ export const RU_I18N = {
   grip_style_percent_style: `Стиль «процент»`,
   grip_style_orbit_satellite: `Спутник на орбите`,
   grip_style_hidden: `Скрыт (стандартное изменение размера)`,
+  image_hover_desc: `При наведении на подходящее изображение сразу показывать кнопки быстрого доступа «Меню» и «Перевести»`,
   close: `Закрыть`,
 };

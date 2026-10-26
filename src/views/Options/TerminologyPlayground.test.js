@@ -100,12 +100,8 @@ jest.mock("../../hooks/Setting", () => ({
 jest.mock("../../hooks/I18n", () => {
   // 模拟真实 useI18n 的中文文案（直接读字典），避免动态 key（如冲突类型描述）退化为 fallback。
   const { I18N } = require("../../config/i18n");
-  return {
-    useI18n:
-      () =>
-      (key, fallback = "") =>
-        I18N[key]?.zh ?? fallback,
-  };
+  const i18n = (key, fallback = "") => I18N[key]?.zh ?? fallback;
+  return { useI18n: () => i18n };
 });
 
 jest.mock("../../hooks/Rules", () => ({
@@ -116,7 +112,7 @@ jest.mock("../../libs/rules", () => ({
   matchRule: (...args) => mockMatchRule(...args),
 }));
 
-jest.mock("../../libs/log", () => {
+jest.mock("../../libs/log", () => jest.requireActual("../../testUtils/scopedLogMock").withScopedLogMock((() => {
   // LogLevel 仍由真实模块提供：config/setting.js 在导入期读取 LogLevel.INFO。
   // logger 用 getter 延迟读取：mock 工厂在 import 阶段执行，直接返回对象会命中 TDZ。
   const actual = jest.requireActual("../../libs/log");
@@ -127,7 +123,7 @@ jest.mock("../../libs/log", () => {
     },
     kissLog: jest.fn(),
   };
-});
+})()));
 
 // 真实 AI 翻译测试走 apiTranslate；单测中 mock，避免引入 ESM-only 依赖（query-string）。
 const mockApiTranslate = jest.fn();
@@ -330,7 +326,7 @@ describe("TerminologyPlayground", () => {
     mockResolvedTransApis.length = 0;
     mockClient.isWeb = false;
     mockMatchRule.mockReset();
-    mockLogger.info.mockReset();
+    mockLogger.debug.mockReset();
     mockLogger.error.mockReset();
     mockAlert.success.mockReset();
     mockAlert.error.mockReset();
@@ -446,7 +442,7 @@ describe("TerminologyPlayground", () => {
 
     // 通过时不应输出 error 日志，只输出 info 摘要。
     expect(mockLogger.error).not.toHaveBeenCalled();
-    expect(mockLogger.info).toHaveBeenCalledWith(
+    expect(mockLogger.debug).toHaveBeenCalledWith(
       "[TermPlayground]",
       expect.objectContaining({
         failCount: 0,
@@ -503,14 +499,14 @@ describe("TerminologyPlayground", () => {
 
   test("skips the mount-time compute when a touched draft is empty (no wasted compute)", async () => {
     // touched=true 但术语为空：挂载时不执行空算（空算产不出例句，纯浪费），
-    // 以 mockLogger.info 未被调用为证（成功路径 runCompute 必然写 info 日志）。
-    mockLogger.info.mockClear();
+    // 以 mockLogger.debug 未被调用为证（成功路径 runCompute 必然写 info 日志）。
+    mockLogger.debug.mockClear();
     const { container, root } = renderPlayground(
       { rule: null },
       { initialTermsDraft: "", initialTermDraftTouched: true }
     );
     await flushEffects();
-    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(mockLogger.debug).not.toHaveBeenCalled();
     expect(
       container.querySelector('[data-testid="terminology-example-text"]')
     ).toBeNull();
@@ -547,7 +543,7 @@ describe("TerminologyPlayground", () => {
       rule: { pattern: "*", terms: "SQL,结构化查询" },
     });
     await flushEffects();
-    mockLogger.info.mockClear();
+    mockLogger.debug.mockClear();
 
     // 输入新值后立即卸载（300ms 防抖任务尚未执行）。
     const textarea = container.querySelector(
@@ -565,7 +561,7 @@ describe("TerminologyPlayground", () => {
 
     // 卸载时取消防抖：窗口过后不得再触发重算（无新增日志调用）。
     await new Promise((resolve) => setTimeout(resolve, 500));
-    expect(mockLogger.info).not.toHaveBeenCalled();
+    expect(mockLogger.debug).not.toHaveBeenCalled();
     expect(mockLogger.error).not.toHaveBeenCalled();
   });
 
@@ -632,9 +628,7 @@ describe("TerminologyPlayground", () => {
       '[data-testid="terminology-auto-sample-unsupported"]'
     );
     expect(alert).not.toBeNull();
-    expect(alert.textContent).toContain(
-      "部分正则术语无法可靠生成自动匹配样例"
-    );
+    expect(alert.textContent).toContain("部分正则术语无法可靠生成自动匹配样例");
     expect(alert.textContent).not.toContain("未生成可测试的例句");
 
     act(() => root.unmount());
@@ -880,7 +874,7 @@ describe("TerminologyPlayground", () => {
       container.querySelector('[data-testid="terminology-example-status"]')
     ).not.toBeNull();
     // 摘要统计正确。
-    expect(mockLogger.info).toHaveBeenCalledWith(
+    expect(mockLogger.debug).toHaveBeenCalledWith(
       "[TermPlayground]",
       expect.objectContaining({
         uniqueConflictPairs: 4,
@@ -4296,8 +4290,9 @@ describe("TerminologyPlayground", () => {
 
   test("term textareas use the drawn resize grip only when content or a locked height exists", async () => {
     __resetSessionHeightMapForTests();
-    const { container, root, setAiTermsDraft } =
-      renderPlayground({ rule: null });
+    const { container, root, setAiTermsDraft } = renderPlayground({
+      rule: null,
+    });
     await flushEffects();
     // 回归护栏：组件树中不应出现任何旧式自定义缩放手柄 testid。
     expect(
@@ -4326,9 +4321,7 @@ describe("TerminologyPlayground", () => {
     // 本文件 i18n 为真实翻译形态（非按 key 直传），label 断言非空即可。
     expect(termsGrip.getAttribute("aria-label")).toBeTruthy();
     expect(
-      aiTextarea
-        .closest(".MuiInputBase-root")
-        .querySelector('[role="slider"]')
+      aiTextarea.closest(".MuiInputBase-root").querySelector('[role="slider"]')
     ).toBeNull();
 
     // 键盘锁定锚。
@@ -4343,9 +4336,7 @@ describe("TerminologyPlayground", () => {
     // AI 术语框注入内容 → 手柄在场。
     act(() => setAiTermsDraft("quzzle,缓存节点"));
     expect(
-      aiTextarea
-        .closest(".MuiInputBase-root")
-        .querySelector('[role="slider"]')
+      aiTextarea.closest(".MuiInputBase-root").querySelector('[role="slider"]')
     ).not.toBeNull();
 
     act(() => root.unmount());

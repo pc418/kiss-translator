@@ -3,6 +3,7 @@ import { I18N } from "../../config/i18n";
 // Index labels instead of mounted pages: advanced controls and other routes may
 // not exist in the DOM yet. Never include user-entered values or credentials.
 export const SETTINGS_SEARCH_KEYS = {
+  diagnostics: ["diagnostics_title", "diagnostics_query", "diagnostics_export"],
   overview: [
     "ui_lang",
     "popup_default_view",
@@ -128,9 +129,12 @@ export const SETTINGS_SEARCH_KEYS = {
     "mousehover_hold_key",
     "mousehover_display_mode",
     "translate_service",
+    "mousehover_hold_button",
     "mousehover_hold_delay",
     "mousehover_hold_scope",
     "mousehover_hold_display",
+    "mousehover_hold_suppress_menu",
+    "mousehover_hold_revert_on_gesture",
     "mousehover_hold_prevent_click",
     "mousehover_bubble_style",
     "blacklist",
@@ -226,6 +230,7 @@ export const SETTINGS_SEARCH_KEYS = {
   ],
   prompts: ["prompt_name", "system_prompt", "user_prompt"],
   sync: [
+    "auto_sync",
     "data_sync_type",
     "data_sync_url",
     "data_sync_user",
@@ -305,9 +310,12 @@ const SEARCH_PREREQUISITES = {
   seg_prompt_mode: "ai_segmentation",
   data_sync_url: "data_sync_type",
   data_sync_user: "data_sync_type",
+  mousehover_hold_button: "mousehover_hold_key",
   mousehover_hold_delay: "mousehover_hold_key",
   mousehover_hold_scope: "mousehover_hold_key",
   mousehover_hold_display: "mousehover_hold_key",
+  mousehover_hold_suppress_menu: "mousehover_hold_key",
+  mousehover_hold_revert_on_gesture: "mousehover_hold_key",
   mousehover_hold_prevent_click: "mousehover_hold_key",
   mousehover_bubble_style: "mousehover_display_mode",
 };

@@ -25,7 +25,7 @@ import {
   OPT_POPUP_DEFAULT_VIEW_TEXT,
   resolveApiPromptList,
 } from "../../config";
-import { kissLog } from "../../libs/log";
+import { logger } from "../../libs/log";
 import PopupCont from "./PopupCont";
 import TranslationPanelSurface from "../../components/TranslationPanel/Surface";
 import TranslationPanelHeader from "../../components/TranslationPanel/Header";
@@ -149,11 +149,11 @@ function useFitSeparateWindow(enabled, panelRef) {
               availLeft: window.screen?.availLeft * screenScale,
               availTop: window.screen?.availTop * screenScale,
             })
-          ).catch((error) => kissLog("fit separate window", error));
+          ).catch((error) => logger.child("popup").info("fit separate window", error));
         });
       } catch (error) {
         // Keep the default size if the window closes or its APIs are unavailable.
-        kissLog("measure separate window", error);
+        logger.child("popup").debug("measure separate window", error);
       }
     };
 
@@ -324,6 +324,7 @@ export function Trantab({ isSeparate = false, isVisible = true }) {
       toLang2,
       aiDictApiSlug,
       aiDictPromptSlug,
+      ttsApiSlug,
     },
     langDetector = {},
     prompts = [],
@@ -380,6 +381,7 @@ export function Trantab({ isSeparate = false, isVisible = true }) {
           enSug={enSug}
           aiDictApiSlug={aiDictApiSlug}
           aiDictPromptSlug={aiDictPromptSlug}
+          ttsApiSlug={ttsApiSlug}
           prompts={prompts}
           translateVariants={translateVariants}
           parseLatex={parseLatex}
@@ -500,7 +502,7 @@ export default function Popup() {
     try {
       if ((await sendBgMsg(MSG_OPEN_OPTIONS)) === true) window.close();
     } catch (err) {
-      kissLog("open options page from popup", err);
+      logger.child("popup").error("open options page from popup", err);
     }
   }, []);
 

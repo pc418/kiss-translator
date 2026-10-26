@@ -23,6 +23,7 @@ import { touchTapListener } from "./touch";
 import { PopupManager } from "./popupManager";
 import { FabManager } from "./fabManager";
 import { RuleEditorManager } from "./ruleEditorManager";
+import { ImageTranslateManager } from "./imageTranslate/imageTranslateManager";
 import {
   OPT_SHORTCUT_TRANSLATE,
   OPT_SHORTCUT_TRANSONLY,
@@ -45,7 +46,11 @@ import {
 import { logger } from "./log";
 import { getPopupDocumentIdentity } from "./popupDocument";
 import { isSameStorageValue } from "./storageEquality";
-import { MSG_GET_FRAME_ID, MSG_VALIDATE_DOCUMENT } from "../config/msg";
+import {
+  MSG_GET_FRAME_ID,
+  MSG_VALIDATE_DOCUMENT,
+  MSG_IMAGE_SCREENSHOT,
+} from "../config/msg";
 
 /**
  * 前台翻译业务的总生命周期管理器。
@@ -106,6 +111,7 @@ export default class TranslatorManager {
   _popupManager = null;
   _fabManager = null;
   _ruleEditorManager = null;
+  _imageTranslateManager = null;
 
   /**
    * 保存启动参数并绑定全局 handler。
@@ -147,7 +153,7 @@ export default class TranslatorManager {
    */
   start() {
     if (this.#isActive) {
-      logger.info("TranslatorManager is already started.");
+      logger.child("translator-manager").debug("TranslatorManager is already started.");
       return;
     }
 
@@ -168,7 +174,7 @@ export default class TranslatorManager {
       this.#setupSpaListeners();
     }
     this.#isActive = true;
-    logger.info("TranslatorManager started.");
+    logger.child("translator-manager").info("TranslatorManager started.");
   }
 
   /**
@@ -180,7 +186,7 @@ export default class TranslatorManager {
    */
   restart(reason = "spa-navigation") {
     if (!this.#isActive) {
-      logger.info("TranslatorManager is not running.");
+      logger.child("translator-manager").debug("TranslatorManager is not running.");
       return;
     }
     this.#storageRevision += 1;
@@ -196,7 +202,7 @@ export default class TranslatorManager {
 
     this.#createRuntimeModules();
     this.#refreshDocumentElementObserver();
-    logger.info(`TranslatorManager restarted: ${reason}`);
+    logger.child("translator-manager").debug("TranslatorManager restarted:", reason);
   }
 
   /**
@@ -207,7 +213,7 @@ export default class TranslatorManager {
    */
   stop() {
     if (!this.#isActive) {
-      logger.info("TranslatorManager is not running.");
+      logger.child("translator-manager").debug("TranslatorManager is not running.");
       return;
     }
     this.#storageRevision += 1;
@@ -243,7 +249,7 @@ export default class TranslatorManager {
 
     this.#destroyRuntimeModules();
     this.#isActive = false;
-    logger.info("TranslatorManager stopped.");
+    logger.child("translator-manager").info("TranslatorManager stopped.");
   }
 
   /**
@@ -313,6 +319,15 @@ export default class TranslatorManager {
           this.#fabConfig = { ...this.#fabConfig, isHide };
         },
       });
+      this._imageTranslateManager = new ImageTranslateManager({
+        setting: this.#cloneConfig(this.#setting),
+        rule: this.#cloneConfig(this.#rule),
+        isIframe: this.#isIframe,
+        onScreenshotSessionChange: (active) => {
+          if (active) this._fabManager?.suspend();
+          else this._fabManager?.resume();
+        },
+      });
     }
   }
 
@@ -328,6 +343,7 @@ export default class TranslatorManager {
     this._ruleEditorManager?.destroy();
     this._ruleEditorManager = null;
     this._popupManager?.destroy();
+    this._imageTranslateManager?.destroy();
     this._fabManager?.destroy();
     this._transboxManager?.disable();
     this._inputTranslator?.disable();
@@ -338,6 +354,7 @@ export default class TranslatorManager {
     this._inputTranslator = null;
     this._popupManager = null;
     this._fabManager = null;
+    this._imageTranslateManager = null;
   }
 
   /**
@@ -352,7 +369,7 @@ export default class TranslatorManager {
       try {
         return globalThis.structuredClone(value);
       } catch (err) {
-        logger.debug("structuredClone failed, using JSON clone.", err);
+        logger.child("translator-manager").debug("structuredClone failed, using JSON clone.", err);
       }
     }
     return JSON.parse(JSON.stringify(value));
@@ -590,7 +607,7 @@ export default class TranslatorManager {
 
       this._translator?.rescan();
       this.#notifyTouchState();
-      logger.info(`TranslatorManager rescanned: ${refreshReason}`);
+      logger.child("translator-manager").debug("TranslatorManager rescanned:", refreshReason);
     }, 0);
   }
 
@@ -668,7 +685,7 @@ export default class TranslatorManager {
           "local"
         );
       })
-      .catch((error) => logger.debug("Read current API settings", error));
+      .catch((error) => logger.child("translator-manager").debug("Read current API settings", error));
   }
 
   #handleStorageChange(changes, areaName) {
@@ -702,6 +719,7 @@ export default class TranslatorManager {
     ) {
       return;
     }
+    this._imageTranslateManager?.updateSetting(setting);
     if (isSameStorageValue(setting.transApis, this.#setting?.transApis)) {
       return;
     }
@@ -758,7 +776,7 @@ export default class TranslatorManager {
    * 处理同窗口 CustomEvent 通信。
    */
   #handleWindowMessage(event) {
-    logger.debug("handle window message:", event);
+    logger.child("translator-manager").debug("handle window message:", event);
     this.#processActions(event.detail);
   }
 
@@ -1027,7 +1045,7 @@ export default class TranslatorManager {
       sendIframeMsg(action, args);
     }
 
-    logger.debug("process action:", action, args);
+    logger.child("translator-manager").debug("process action:", action, args);
 
     switch (action) {
       case MSG_TRANS_TOGGLE:
@@ -1049,6 +1067,7 @@ export default class TranslatorManager {
         break;
       case MSG_TRANS_PUTRULE:
         this._translator?.updateRule(args);
+        this._imageTranslateManager?.updateRule(args);
         break;
       case MSG_OPEN_TRANBOX:
         document.dispatchEvent(
@@ -1059,6 +1078,9 @@ export default class TranslatorManager {
         break;
       case MSG_POPUP_TOGGLE:
         this._popupManager?.toggle();
+        break;
+      case MSG_IMAGE_SCREENSHOT:
+        this._imageTranslateManager?.startScreenshot();
         break;
       case MSG_TRANSBOX_TOGGLE:
         if (typeof args?.enabled === "boolean") {
@@ -1115,7 +1137,7 @@ export default class TranslatorManager {
         this._inputTranslator?.handleTranslate();
         break;
       default:
-        logger.info(`Message action is unavailable: ${action}`);
+        logger.child("translator-manager").info("Message action is unavailable:", action);
         return { error: `Message action is unavailable: ${action}` };
     }
     return this.#getRuntimeResponse();

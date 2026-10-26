@@ -34,14 +34,14 @@ jest.mock("./shortcut", () => ({
 
 jest.mock("../apis", () => ({ apiTranslate: jest.fn() }));
 jest.mock("./svg", () => ({ createLoadingSVG: jest.fn() }));
-jest.mock("./log", () => ({
+jest.mock("./log", () => jest.requireActual("../testUtils/scopedLogMock").withScopedLogMock((() => ({
   logger: {
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
   },
-}));
+}))()));
 
 const { InputTranslator } = require("./inputTranslate");
 const { stepShortcutRegister } = require("./shortcut");
@@ -141,6 +141,7 @@ describe("InputTranslator input button", () => {
     focusTarget(translator, target);
 
     expect(getFloatButton(target)).toBeTruthy();
+    expect(getFloatButton(target).hasAttribute("data-kiss-ui")).toBe(true);
   });
 
   test.each([
@@ -268,5 +269,32 @@ describe("InputTranslator input button", () => {
       })
     );
     expect(target.value).toBe("First isn't & simple\n\nSecond");
+  });
+  test("selected failure does not use a leftover fallback list", async () => {
+    translator.disable();
+    const primary = { apiSlug: "primary", apiType: "Microsoft" };
+    translator = new InputTranslator({
+      inputRule: {
+        transOpen: true,
+        showDot: "always",
+        apiSlug: "primary",
+        apiSlugs: ["backup"],
+        fromLang: "en",
+        toLang: "zh-CN",
+      },
+      transApis: [primary, { ...primary, apiSlug: "backup" }],
+    });
+    resolveApiPromptSettings.mockReturnValue(primary);
+    createLoadingSVG.mockReturnValue(
+      document.createElementNS("http://www.w3.org/2000/svg", "svg")
+    );
+    apiTranslate.mockReset().mockRejectedValue(new Error("selected failed"));
+    const target = document.createElement("textarea");
+    target.value = "original";
+    focusTarget(translator, target);
+    await translator.handleTranslate({ isBtnTrigger: true });
+    expect(apiTranslate).toHaveBeenCalledTimes(1);
+    expect(apiTranslate.mock.calls[0][0].apiSetting.apiSlug).toBe("primary");
+    expect(target.value).toBe("original");
   });
 });

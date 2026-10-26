@@ -2,10 +2,13 @@ import {
   DEFAULT_INPUT_RULE,
   DEFAULT_INPUT_SHORTCUT,
   OPT_LANGS_LIST,
-  DEFAULT_API_SETTING,
   OPT_INPUT_DOT_DISABLE,
   OPT_INPUT_DOT_MOBILE,
 } from "../config";
+import {
+  availableApiForScene,
+  withScenePrompt,
+} from "../config/serviceSelection";
 import { resolveApiPromptSettings } from "../config/prompt";
 import { isMobile } from "./mobile";
 import { genEventName, removeEndchar, matchInputStr, sleep } from "./utils";
@@ -142,7 +145,7 @@ async function smartReplaceText(node, newText) {
   // ------------------------------------------------
   if (isRichEditor) {
     try {
-      logger.debug("Rich Editor detected: Priority Strategy (Clipboard Paste)");
+      logger.child("input-translate").debug("Rich Editor detected: Priority Strategy (Clipboard Paste)");
       const dt = new DataTransfer();
       dt.setData("text/plain", newText);
       const pasteEvt = new ClipboardEvent("paste", {
@@ -159,7 +162,7 @@ async function smartReplaceText(node, newText) {
 
       if (checkSuccess(node, newText)) return true;
     } catch (e) {
-      logger.debug("Strategy Paste failed", e);
+      logger.child("input-translate").debug("Strategy Paste failed", e);
     }
   }
 
@@ -173,7 +176,7 @@ async function smartReplaceText(node, newText) {
       if (checkSuccess(node, newText)) return true;
     }
   } catch (e) {
-    logger.debug("Strategy 1 (insertText) failed", e);
+    logger.child("input-translate").debug("Strategy 1 (insertText) failed", e);
   }
 
   // === 策略 2: 标准 Input 处理 (React/Vue 兼容) ===
@@ -182,7 +185,7 @@ async function smartReplaceText(node, newText) {
       setNativeValue(node, newText);
       return true;
     } catch (e) {
-      logger.debug("Strategy 2 (Input Value) failed", e);
+      logger.child("input-translate").debug("Strategy 2 (Input Value) failed", e);
     }
   }
 
@@ -208,6 +211,8 @@ function addLoading(node, loadingId) {
 
   const div = document.createElement("div");
   div.id = loadingId;
+  div.className = "notranslate";
+  div.setAttribute("data-kiss-ui", "");
   div.appendChild(createLoadingSVG());
 
   div.style.cssText = `
@@ -316,7 +321,7 @@ export class InputTranslator {
       this.handleFocusIn();
     }
 
-    logger.info("Input Translator enabled.");
+    logger.child("input-translate").info("Input Translator enabled.");
   }
 
   disable() {
@@ -350,7 +355,7 @@ export class InputTranslator {
     this.#activeInput = null;
 
     this.#isEnabled = false;
-    logger.info("Input Translator disabled.");
+    logger.child("input-translate").info("Input Translator disabled.");
   }
 
   toggle() {
@@ -425,6 +430,8 @@ export class InputTranslator {
   // 将创建逻辑抽离，保持代码整洁
   createFloatButtonDOM() {
     this.#floatBtn = document.createElement("div");
+    this.#floatBtn.className = "notranslate";
+    this.#floatBtn.setAttribute("data-kiss-ui", "");
     // ... 样式代码保持不变 ...
     const isTouch = isMobile || navigator.maxTouchPoints > 0;
     const size = isTouch ? "36px" : "30px";
@@ -536,18 +543,18 @@ export class InputTranslator {
    * @param {boolean} options.isBtnTrigger 是否由悬浮按钮触发
    */
   async handleTranslate({ isBtnTrigger = false } = {}) {
-    logger.debug("handle input translate");
+    logger.child("input-translate").debug("handle input translate");
 
     // 1. 获取真正的焦点元素
     const node = getDeepActiveElement();
 
     // 2. 检查节点是否支持
     if (!node || !isEditableTarget(node)) {
-      logger.debug("Active node is not editable");
+      logger.child("input-translate").debug("Active node is not editable");
       return;
     }
 
-    const { apiSlug, transSign, triggerCount } = this.#config.inputRule;
+    const { transSign, triggerCount } = this.#config.inputRule;
     let { fromLang, toLang } = this.#config.inputRule;
 
     // 3. 获取文本
@@ -593,14 +600,10 @@ export class InputTranslator {
       }
     }
 
-    const rawApiSetting =
-      this.#config.transApis.find((api) => api.apiSlug === apiSlug) ||
-      DEFAULT_API_SETTING;
-
-    const apiSetting = resolveApiPromptSettings(
-      rawApiSetting,
-      this.#config.prompts,
-      this.#config.subtitleSetting
+    const selectedApi = availableApiForScene(
+      this.#config.inputRule,
+      this.#config.transApis,
+      "translate"
     );
 
     const loadingId = "kiss-loading-" + genEventName();
@@ -610,7 +613,13 @@ export class InputTranslator {
       this.hideFloatButton(); // 翻译期间隐藏按钮
 
       // 调用翻译 API
-      const { trText, isSame } = await apiTranslate({
+      if (!selectedApi) throw new Error("没有可用的翻译接口");
+      const apiSetting = resolveApiPromptSettings(
+        withScenePrompt(selectedApi, this.#config.inputRule),
+        this.#config.prompts,
+        this.#config.subtitleSetting
+      );
+      const result = await apiTranslate({
         text,
         fromLang,
         toLang,
@@ -618,6 +627,7 @@ export class InputTranslator {
         textFormat: "text",
         translateVariants: this.#config.translateVariants,
       });
+      const { trText, isSame } = result || {};
 
       // 输入框写回纯文本，开启后将模型输出的行内 LaTeX 转成可读的 Unicode
       const trimmedText = trText?.trim() || "";
@@ -629,10 +639,10 @@ export class InputTranslator {
       // 6. 执行替换 (使用新的智能替换函数)
       const success = await smartReplaceText(node, newText);
       if (!success) {
-        logger.warn("Text replacement failed after all strategies.");
+        logger.child("input-translate").error("Text replacement failed after all strategies.");
       }
     } catch (err) {
-      logger.error("Translate input error:", err);
+      logger.child("input-translate")[err?.name === "AbortError" || err?.code === "REQUEST_CANCELLED" ? "info" : "error"]("Translate input error:", err);
     } finally {
       removeLoading(loadingId);
       // 恢复显示按钮
