@@ -307,6 +307,15 @@ const userscriptWebpack = (config, env) => {
 
   config.output.filename = "[name].js";
   config.output.publicPath = env === "production" ? "./" : "/";
+  // 油猴脚本运行在宿主页面，异步 chunk 会按宿主页面 URL 加载而 404（ChunkLoadError）；
+  // 多入口共享的动态依赖无法被 LimitChunkCountPlugin 合并，因此直接随入口打包。
+  config.module.parser = {
+    ...config.module.parser,
+    javascript: {
+      ...config.module.parser?.javascript,
+      dynamicImportMode: "eager",
+    },
+  };
   config.optimization.splitChunks = { cacheGroups: { default: false } };
   config.optimization.runtimeChunk = false;
   config.optimization.minimize = env === "production";
