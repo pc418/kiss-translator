@@ -25,6 +25,40 @@ const aliasLocalRuntime = (config) => {
   };
 };
 
+// 油猴脚本运行在任意宿主页面，入口之外的 JS（异步 chunk、Worker chunk）会按宿主页面 URL 加载而 404，
+// 因此构建期直接报错，而不是等到用户页面上出现 ChunkLoadError。
+class SelfContainedEntriesPlugin {
+  apply(compiler) {
+    compiler.hooks.thisCompilation.tap(
+      "SelfContainedEntriesPlugin",
+      (compilation) => {
+        compilation.hooks.afterSeal.tap("SelfContainedEntriesPlugin", () => {
+          const entryChunks = new Set();
+          for (const entrypoint of compilation.entrypoints.values())
+            for (const chunk of entrypoint.chunks) entryChunks.add(chunk);
+          for (const chunk of compilation.chunks) {
+            const scripts = [...chunk.files].filter((file) =>
+              file.endsWith(".js")
+            );
+            if (entryChunks.has(chunk) || scripts.length === 0) continue;
+            const modules = compilation.chunkGraph
+              .getChunkModules(chunk)
+              .map((module) =>
+                module.readableIdentifier(compilation.requestShortener)
+              )
+              .slice(0, 5);
+            compilation.errors.push(
+              new webpack.WebpackError(
+                `Userscript emitted a non-entry script ${scripts.join(", ")} that would load from the host page. Modules: ${modules.join(", ")}`
+              )
+            );
+          }
+        });
+      }
+    );
+  }
+}
+
 console.log("process.env.REACT_APP_CLIENT", process.env.REACT_APP_CLIENT);
 
 // 方案 A：浏览器扩展的 Webpack 覆盖配置 (Popup, Options, Background, Content Scripts)
@@ -204,6 +238,15 @@ const userscriptWebpack = (config, env) => {
       __dirname,
       "src/libs/stubs/interpreter-gm.js"
     ),
+    // Worker 源码内联进脚本，避免生成按宿主页面 URL 加载的 Worker chunk。
+    [path.resolve(__dirname, "src/providers/workerFactory")]: path.resolve(
+      __dirname,
+      "src/providers/workerFactory.userscript.js"
+    ),
+    [path.resolve(__dirname, "src/providers/workerFactory.js")]: path.resolve(
+      __dirname,
+      "src/providers/workerFactory.userscript.js"
+    ),
     "webextension-polyfill$": path.resolve(
       __dirname,
       "src/libs/stubs/empty-object.js"
@@ -322,8 +365,9 @@ const userscriptWebpack = (config, env) => {
 
   // 生产环境压缩时，利用 Terser 插件排除普通注释，强化双轮死代码消除与调试剥离，文件顶部注入油猴 Meta Banner
   if (config.optimization.minimize) {
-    config.optimization.minimizer = [
+    const terser = (format, filter) =>
       new TerserPlugin({
+        ...filter,
         extractComments: false, // 阻止生成独立许可注释文件 .license.txt
         terserOptions: {
           compress: {
@@ -332,10 +376,15 @@ const userscriptWebpack = (config, env) => {
           },
           format: {
             comments: false, // 移除所有其他代码注释
-            preamble: banner, // 头部强制置入油猴 Meta 信息
+            ...format,
           },
         },
-      }),
+      });
+    // 内联 Worker 由子编译压缩后作为字符串嵌入，不需要油猴 Meta 信息
+    const inlineWorker = /^inline-worker-/;
+    config.optimization.minimizer = [
+      terser({ preamble: banner }, { exclude: inlineWorker }), // 头部强制置入油猴 Meta 信息
+      terser({}, { include: inlineWorker }),
     ];
   }
 
@@ -363,6 +412,7 @@ const userscriptWebpack = (config, env) => {
       template: paths.appHtml,
       filename: "options.html",
     }),
+    new SelfContainedEntriesPlugin(),
     {
       apply(compiler) {
         compiler.hooks.done.tap("BundleModuleReport", (stats) => {
