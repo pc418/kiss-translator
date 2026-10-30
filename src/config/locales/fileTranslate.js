@@ -4,6 +4,17 @@
  */
 
 export const FILE_TRANSLATE_I18N = {
+  file_translation_page_title: {
+    zh: "文件翻译 - 免费在线 PDF、EPUB、Markdown、图片双语对照翻译 | KISS Translator",
+    en: "File Translation - Free Online Bilingual Translation for PDF, EPUB, Markdown & Images | KISS Translator",
+    zh_TW:
+      "檔案翻譯 - 免費線上 PDF、EPUB、Markdown、圖片雙語對照翻譯 | KISS Translator",
+    ja: "ファイル翻訳 - PDF、EPUB、Markdown、画像の無料オンライン二言語対訳翻訳 | KISS Translator",
+    ko: "파일 번역 - PDF, EPUB, Markdown, 이미지 무료 온라인 대조 번역 | KISS Translator",
+    tr: "Dosya Çevirisi - PDF, EPUB, Markdown ve Görseller İçin Ücretsiz Çevrimiçi İki Dilli Çeviri | KISS Translator",
+    vi: "Dịch tệp - Dịch song ngữ trực tuyến miễn phí cho PDF, EPUB, Markdown và hình ảnh | KISS Translator",
+    ru: "Перевод файлов — бесплатный онлайн-перевод PDF, EPUB, Markdown и изображений | KISS Translator",
+  },
   file_paste: {
     zh: "粘贴文件或文本",
     en: "Paste file or text",
@@ -1778,9 +1789,9 @@ export const FILE_TRANSLATE_I18N = {
     ru: "Модели LLM / перевода / суммаризации",
   },
   group_title_asr: {
-    zh: "语音识别 (ASR)",
+    zh: "语音识别（ASR）",
     en: "Speech Recognition (ASR)",
-    zh_TW: "語音辨識 (ASR)",
+    zh_TW: "語音辨識（ASR）",
     ja: "音声認識 (ASR)",
     ko: "음성 인식 (ASR)",
     tr: "Konuşma Tanıma (ASR)",
@@ -1788,9 +1799,9 @@ export const FILE_TRANSLATE_I18N = {
     ru: "Распознавание речи (ASR)",
   },
   group_title_tts: {
-    zh: "语音合成 (TTS)",
+    zh: "语音合成（TTS）",
     en: "Speech Synthesis (TTS)",
-    zh_TW: "語音合成 (TTS)",
+    zh_TW: "語音合成（TTS）",
     ja: "音声合成 (TTS)",
     ko: "음성 합성 (TTS)",
     tr: "Konuşma Sentezi (TTS)",

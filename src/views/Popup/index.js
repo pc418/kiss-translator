@@ -149,7 +149,9 @@ function useFitSeparateWindow(enabled, panelRef) {
               availLeft: window.screen?.availLeft * screenScale,
               availTop: window.screen?.availTop * screenScale,
             })
-          ).catch((error) => logger.child("popup").info("fit separate window", error));
+          ).catch((error) =>
+            logger.child("popup").info("fit separate window", error)
+          );
         });
       } catch (error) {
         // Keep the default size if the window closes or its APIs are unavailable.
@@ -348,6 +350,12 @@ export function Trantab({ isSeparate = false, isVisible = true }) {
           parseLatex={parseLatex}
           autoFocusInput={autoFocusInput}
           isVisible={isVisible}
+          enDict={enDict}
+          enSug={enSug}
+          aiDictApiSlug={aiDictApiSlug}
+          aiDictPromptSlug={aiDictPromptSlug}
+          ttsApiSlug={ttsApiSlug}
+          prompts={prompts}
           syncExternalTextWhileEditing
         />
       </div>

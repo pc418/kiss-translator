@@ -6,6 +6,19 @@ import {
 import { executeFileTranslation } from "../libs/fileTranslationService";
 import { prepareImage } from "../localAi/core/inputLimits";
 import { createNativeRegistry } from "../builtin-plugins/runtime";
+import { invokeBackgroundPlugin } from "../providers/backgroundInvocation";
+
+jest.mock("../providers/backgroundInvocation", () => ({
+  invokeBackgroundPlugin: jest.fn(() => ({
+    result: Promise.resolve({ text: "Plugin recognized text" }),
+    events: {
+      [Symbol.asyncIterator]: () => ({
+        next: () => Promise.resolve({ done: true }),
+      }),
+    },
+    cancel: jest.fn(),
+  })),
+}));
 
 jest.mock("../providers/transport", () => ({
   createAssetStore: () => ({
@@ -97,10 +110,13 @@ jest.mock("../libs/fileTranslationService", () => ({
 }));
 
 const mockCreateNativeRegistry = createNativeRegistry.getMockImplementation();
+const mockInvokeBackgroundPlugin =
+  invokeBackgroundPlugin.getMockImplementation();
 
 describe("pipelineCore", () => {
   beforeEach(() => {
     createNativeRegistry.mockImplementation(mockCreateNativeRegistry);
+    invokeBackgroundPlugin.mockImplementation(mockInvokeBackgroundPlugin);
     prepareImage.mockImplementation(async (blob) => ({
       blob,
       size: { width: 400, height: 300 },
@@ -132,7 +148,7 @@ describe("pipelineCore", () => {
         apiSlug: "mock-ocr",
         apiName: "Mock OCR",
         provider: {
-          apiVersion: "1",
+          apiVersion: 1,
           capabilities: {
             recognizeText: {
               handler: "ocr",
@@ -148,7 +164,7 @@ describe("pipelineCore", () => {
         apiSlug: "mock-layout",
         apiName: "Mock Layout",
         provider: {
-          apiVersion: "1",
+          apiVersion: 1,
           capabilities: {
             analyzeLayout: {
               handler: "layout",
@@ -164,7 +180,7 @@ describe("pipelineCore", () => {
         apiSlug: "mock-trans",
         apiName: "Mock Trans",
         provider: {
-          apiVersion: "1",
+          apiVersion: 1,
           capabilities: {
             translate: { handler: "translate", outputModes: ["complete"] },
           },
@@ -176,7 +192,7 @@ describe("pipelineCore", () => {
         apiSlug: "mock-vlm",
         apiName: "Mock VLM",
         provider: {
-          apiVersion: "1",
+          apiVersion: 1,
           capabilities: {
             parseImage: {
               handler: "vlm",
@@ -192,7 +208,7 @@ describe("pipelineCore", () => {
         apiSlug: "failing-layout",
         apiName: "Failing Layout",
         provider: {
-          apiVersion: "1",
+          apiVersion: 1,
           capabilities: {
             analyzeLayout: {
               handler: "layout",
@@ -663,7 +679,7 @@ describe("pipelineCore", () => {
       const api = {
         apiSlug: "region-service",
         provider: {
-          apiVersion: "1",
+          apiVersion: 1,
           implementation: { kind: "native" },
           capabilities: { [capability]: { coordinates } },
         },
@@ -1031,15 +1047,27 @@ describe("pipelineCore", () => {
     ["LocalAI", "service-prompt", "", "service prompt"],
     ["LocalAI", "service-prompt", "scene-prompt", "scene prompt"],
     ["OpenAI", "", "", expect.any(String)],
+    ["Plugin", "", "", undefined, "script"],
+    ["Plugin", "", "", undefined, "declarative"],
+    ["Plugin", "service-prompt", "", "service prompt", "script"],
+    ["Plugin", "service-prompt", "scene-prompt", "scene prompt", "script"],
   ])(
     "%s VLM resolves service prompt %s and scene prompt %s",
-    async (apiType, serviceSlug, sceneSlug, expected) => {
+    async (apiType, serviceSlug, sceneSlug, expected, kind = "native") => {
       const api = {
         ...mockSetting.transApis.find((a) => a.apiSlug === "mock-vlm"),
         apiType,
         modelRef: "paddleocr-vl-1.6-onnx-q8",
         vlmPromptSlug: serviceSlug,
       };
+      api.provider = {
+        ...api.provider,
+        implementation: { kind },
+        defaultPrompts: {
+          vlm: [{ id: "default", name: "Default", userPrompt: "Free OCR." }],
+        },
+      };
+      invokeBackgroundPlugin.mockClear();
       await executeImageRecognition({
         imageBlob: new Blob(["source"]),
         setting: {
@@ -1061,7 +1089,9 @@ describe("pipelineCore", () => {
         vlmPromptSlug: sceneSlug,
         selectedRegions: [region(10)],
       });
-      expect(providerCalls()[0][2].prompt).toEqual(expected);
+      const calls =
+        kind === "native" ? providerCalls() : invokeBackgroundPlugin.mock.calls;
+      expect(calls[0][2].prompt).toEqual(expected);
     }
   );
 

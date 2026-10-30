@@ -118,7 +118,19 @@ let openingOptionsPage = null;
  * Fall back to a new tab when the native API is unavailable or fails.
  * Concurrent callers share the operation and receive its success status.
  */
-function openOptionsPage() {
+async function openOptionsPage(path = "") {
+  if (path) {
+    const hash = path.startsWith("#") ? path : `#${path}`;
+    try {
+      await browser.tabs.create({
+        url: browser.runtime.getURL(`options.html${hash}`),
+      });
+      return true;
+    } catch (err) {
+      logger.child("background").error("open options page in new tab", err);
+      return false;
+    }
+  }
   if (openingOptionsPage) return openingOptionsPage;
 
   openingOptionsPage = Promise.resolve()
@@ -128,7 +140,9 @@ function openOptionsPage() {
           await browser.runtime.openOptionsPage();
           return true;
         } catch (err) {
-          logger.child("background").info("open options page with runtime API", err);
+          logger
+            .child("background")
+            .info("open options page with runtime API", err);
         }
       }
 
@@ -330,7 +344,9 @@ async function fitSeparateWindow(args) {
     } else if (windowId === separateWindowId) {
       await updateCacheFromActual(windowId);
     }
-    logger.child("background").debug("Separate window fitted to content", { nextWidth, nextHeight });
+    logger
+      .child("background")
+      .debug("Separate window fitted to content", { nextWidth, nextHeight });
   } catch (err) {
     logger.child("background").info("fit separate window", err);
   }
@@ -375,7 +391,9 @@ async function persistSeparateWindowBounds(bounds) {
   if (!bounds) return;
   try {
     await browser.storage.local.set({ [STOKEY_SEPARATE_WINDOW]: bounds });
-    logger.child("background").debug("Final separate window bounds saved to storage", bounds);
+    logger
+      .child("background")
+      .debug("Final separate window bounds saved to storage", bounds);
   } catch (err) {
     logger.child("background").warn("Save separate window bounds error", err);
   }
@@ -795,7 +813,7 @@ const messageHandlers = {
   [MSG_GET_HTTPCACHE]: (args) => getHttpCache(args), // 读取翻译 HTTP 缓存
   [MSG_PUT_HTTPCACHE]: (args) => putHttpCache(args), // 存入翻译 HTTP 缓存
   [MSG_SHA256]: ({ text = "", salt = "" } = {}) => sha256(text, salt), // 代算缓存签名
-  [MSG_OPEN_OPTIONS]: () => openOptionsPage(), // 打开设置选项页
+  [MSG_OPEN_OPTIONS]: ({ path = "" } = {}) => openOptionsPage(path), // 打开设置选项页
   [MSG_SAVE_RULE]: (args) => saveRule(args), // 写入/保存规则
   [MSG_EDIT_RULE]: (args) => writeSiteRule(args),
   [MSG_INJECT_JS]: (args) => injectToCurrentTab(injectInlineJsBg, args), // 注入 JS 代码到前台

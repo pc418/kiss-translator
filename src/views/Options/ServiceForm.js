@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import ValidationInput from "../../hooks/ValidationInput";
 import { DEFAULT_HTTP_TIMEOUT } from "../../config/apiConstants";
 import {
@@ -28,6 +29,18 @@ import {
   normalizeApiCapabilities,
 } from "../../config/serviceSelection";
 
+export const serviceFieldsGridSx = {
+  display: "grid",
+  gridTemplateColumns: "minmax(0, 1fr)",
+  gap: 2,
+  width: "100%",
+  alignItems: "start",
+  "& > *": { minWidth: 0 },
+  "@container api-detail (min-width: 480px)": {
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  },
+};
+
 /** Both implementations keep test inputs and their actions in a separate card. */
 export function ServiceTestCard({ children, actions }) {
   const i18n = useI18n();
@@ -55,7 +68,7 @@ export function ServiceFormHeader({ api, onChange }) {
   const i18n = useI18n();
   const { setting } = useSetting();
   const source = api.provider?.source?.external
-    ? i18n("plugin_external_plugin")
+    ? i18n("plugin_service_interface")
     : {
         builtin: i18n("api_source_type_builtin"),
         local: i18n("api_source_type_local"),
@@ -160,7 +173,13 @@ export function serviceTransportFeatures(api) {
   };
 }
 
-export function AsrDurationSetting({ api, onChange, onTimestampChange }) {
+export function AsrDurationSetting({
+  api,
+  onChange,
+  onTimestampChange,
+  inline = false,
+}) {
+  const Container = inline ? Fragment : Stack;
   const i18n = useI18n();
   if (!enabledApiCapabilities(api).includes("transcribe")) return null;
   const value =
@@ -183,8 +202,10 @@ export function AsrDurationSetting({ api, onChange, onTimestampChange }) {
         : "unknown"
     : api.asrTimestampSupport || "auto";
   return (
-    <Stack spacing={1}>
-      <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+    <Container {...(!inline && { spacing: 1 })}>
+      <Container
+        {...(!inline && { direction: { xs: "column", sm: "row" }, spacing: 1 })}
+      >
         <TextField
           size="small"
           fullWidth
@@ -235,16 +256,19 @@ export function AsrDurationSetting({ api, onChange, onTimestampChange }) {
             </option>
           )}
         </TextField>
-      </Stack>
+      </Container>
       {!invalid && (
-        <Typography variant="caption">
+        <Typography
+          variant="caption"
+          sx={inline ? { gridColumn: "1 / -1" } : undefined}
+        >
           {i18n("service_asr_effective_limit").replace(
             "{seconds}",
             String(asrChunkDurationSeconds(api))
           )}
         </Typography>
       )}
-    </Stack>
+    </Container>
   );
 }
 

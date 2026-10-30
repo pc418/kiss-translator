@@ -89,6 +89,7 @@ import MenuBookRoundedIcon from "@mui/icons-material/MenuBookRounded";
 import PictureAsPdfRoundedIcon from "@mui/icons-material/PictureAsPdfRounded";
 import { SettingsSelect } from "../Options/SettingsCard";
 import ScenePromptSelect from "./ScenePromptSelect";
+import { isPluginPromptSlug } from "../../providers/defaultPrompts";
 import ImageViewerDialog from "./ImageViewerDialog";
 import ImageSourcePreview, { hasImagePolygon } from "./ImageSourcePreview";
 import { recognizeImageWithLayout } from "../../fileTranslation/imageLayout";
@@ -236,7 +237,12 @@ export default function FileTranslateView() {
     () => ({ ...DEFAULT_FILE_TRANSLATE_SETTING[mode], ...saved[mode] }),
     [mode, saved]
   );
-  const patchScene = (patch) => saveScene(mode, patch);
+  const patchScene = (patch) =>
+    saveScene(mode, {
+      ...patch,
+      ...(Object.hasOwn(patch, "recognitionService") &&
+        isPluginPromptSlug(scene.vlmPromptSlug) && { vlmPromptSlug: "" }),
+    });
 
   const textStyleClass = useMemo(
     () => getTextStyleClass(scene?.textStyle, allTextStyles),
@@ -251,6 +257,19 @@ export default function FileTranslateView() {
   const [file, setFile] = useState(null);
   const [ignoreCache, setIgnoreCache] = useState(false);
   useEffect(() => setIgnoreCache(false), [file]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const baseTitle = i18n(
+      "file_translation_page_title",
+      "文件翻译 - 免费在线 PDF、EPUB、Markdown、图片双语对照翻译 | KISS Translator"
+    );
+    if (file?.name) {
+      document.title = `${file.name} - ${baseTitle}`;
+    } else {
+      document.title = baseTitle;
+    }
+  }, [file?.name, i18n]);
   const [sourceText, setSourceText] = useState("");
   const [preview, setPreview] = useState("");
   const [rows, setRows] = useState([]);
@@ -2132,6 +2151,7 @@ export default function FileTranslateView() {
             i18n={i18n}
             prompts={context.prompts}
             category={PROMPT_CATEGORY_VLM}
+            recognitionApi={activeRecognitionApi}
             fullWidth
             size="small"
             variant="outlined"

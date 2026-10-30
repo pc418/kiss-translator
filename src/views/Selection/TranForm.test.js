@@ -70,17 +70,37 @@ jest.mock("./TranCont", () => {
 jest.mock("./DictCont", () => {
   const React = require("react");
 
-  return function MockDictionary({ source }) {
+  return function MockDictionary({
+    source,
+    toLang,
+    apiSetting,
+    translateVariants,
+  }) {
     return React.createElement("div", {
       "data-testid": "default-dict",
       "data-source-sentence": source?.sentence || "",
       "data-source-url": source?.url || "",
+      "data-to-lang": toLang,
+      "data-api-slug": apiSetting?.apiSlug || "",
+      "data-translate-variants": String(translateVariants),
     });
   };
 });
 
 jest.mock("./Zdic", () => () => null);
-jest.mock("./SugCont", () => () => null);
+jest.mock("./SugCont", () => {
+  const React = require("react");
+
+  return ({ text, enSug, toLang, apiSetting, translateVariants }) =>
+    React.createElement("div", {
+      "data-testid": "suggestions",
+      "data-text": text,
+      "data-en-sug": enSug,
+      "data-to-lang": toLang,
+      "data-api-slug": apiSetting?.apiSlug || "",
+      "data-translate-variants": String(translateVariants),
+    });
+});
 
 jest.mock("./AudioBtn", () => {
   const React = require("react");
@@ -944,7 +964,12 @@ describe("TranForm source input", () => {
     });
 
     expect(readText).toHaveBeenCalledTimes(1);
-    expect(setText).toHaveBeenCalledWith("clipboard text");
+    // Paste fills the visible draft without translating until submission.
+    const sourceInput = container.querySelector(
+      '.kt-translation-source textarea:not([aria-hidden="true"])'
+    );
+    expect(sourceInput.value).toBe("clipboard text");
+    expect(setText).not.toHaveBeenCalled();
 
     act(() => root.unmount());
   });
@@ -1068,6 +1093,115 @@ describe("TranForm translation service selection", () => {
         (element) => element.dataset.text
       )
     ).toEqual(["First line Second line", "First line Second line"]);
+
+    act(() => root.unmount());
+  });
+
+  test.each([
+    ["normal", {}],
+    ["popup", { popupStyle: true }],
+    ["playground", { isPlaygound: true }],
+  ])(
+    "passes the effective target and active service to the dictionary and suggestions in the %s layout",
+    async (_layout, layoutProps) => {
+      const { container, root } = renderTranForm({
+        text: "library",
+        enSug: "Youdao",
+        apiSlugs: ["microsoft"],
+        toLang: "ar",
+        transApis: [
+          {
+            apiSlug: "microsoft",
+            apiName: "Microsoft",
+            apiType: "Microsoft",
+          },
+        ],
+        ...layoutProps,
+      });
+      await flushEffects();
+
+      const dictionary = container.querySelector(
+        '[data-testid="default-dict"]'
+      );
+      expect(dictionary.dataset.toLang).toBe("ar");
+      expect(dictionary.dataset.apiSlug).toBe("microsoft");
+      expect(dictionary.dataset.translateVariants).toBe("true");
+
+      const suggestions = container.querySelector(
+        '[data-testid="suggestions"]'
+      );
+      expect(suggestions.dataset.text).toBe("library");
+      expect(suggestions.dataset.enSug).toBe("Youdao");
+      expect(suggestions.dataset.toLang).toBe("ar");
+      expect(suggestions.dataset.apiSlug).toBe("microsoft");
+      expect(suggestions.dataset.translateVariants).toBe("true");
+
+      act(() => root.unmount());
+    }
+  );
+
+  test("updates the dictionary and suggestions when the target language changes", async () => {
+    const { container, root } = renderTranForm({
+      text: "library",
+      enSug: "Youdao",
+      apiSlugs: ["microsoft"],
+      transApis: [
+        {
+          apiSlug: "microsoft",
+          apiName: "Microsoft",
+          apiType: "Microsoft",
+        },
+      ],
+      simpleStyle: false,
+    });
+    await flushEffects();
+
+    act(() => {
+      Simulate.change(container.querySelector('input[name="toLang"]'), {
+        target: { value: "ar" },
+      });
+    });
+    await flushEffects();
+
+    expect(
+      container.querySelector('[data-testid="tran-cont"]').dataset.toLang
+    ).toBe("ar");
+    expect(
+      container.querySelector('[data-testid="default-dict"]').dataset.toLang
+    ).toBe("ar");
+    expect(
+      container.querySelector('[data-testid="suggestions"]').dataset.toLang
+    ).toBe("ar");
+
+    act(() => root.unmount());
+  });
+
+  test("uses the secondary target for the dictionary and suggestions", async () => {
+    tryDetectLang.mockResolvedValue("zh-CN");
+    const { container, root } = renderTranForm({
+      text: "library",
+      enSug: "Youdao",
+      apiSlugs: ["microsoft"],
+      fromLang: "auto",
+      toLang: "zh-CN",
+      toLang2: "ar",
+      translateVariants: false,
+      transApis: [
+        {
+          apiSlug: "microsoft",
+          apiName: "Microsoft",
+          apiType: "Microsoft",
+        },
+      ],
+    });
+    await flushEffects();
+
+    expect(
+      container.querySelector('[data-testid="default-dict"]').dataset.toLang
+    ).toBe("ar");
+    const suggestions = container.querySelector('[data-testid="suggestions"]');
+    expect(suggestions.dataset.toLang).toBe("ar");
+    expect(suggestions.dataset.translateVariants).toBe("false");
 
     act(() => root.unmount());
   });
@@ -1197,6 +1331,7 @@ describe("TranForm translation service selection", () => {
   test("removes stale services and allows changing or clearing valid selections", async () => {
     const { container, root } = renderTranForm({
       apiSlugs: ["removed", "disabled", "google"],
+      enSug: "Youdao",
       transApis: [
         {
           apiSlug: "disabled",
@@ -1216,6 +1351,9 @@ describe("TranForm translation service selection", () => {
         el.getAttribute("data-api-slug")
       );
     expect(resultSlugs()).toEqual(["google"]);
+    expect(
+      container.querySelector('[data-testid="suggestions"]').dataset.apiSlug
+    ).toBe("google");
     const services = await openServices(container);
     expect(services.map((option) => option.getAttribute("data-value"))).toEqual(
       ["google", "openai"]
@@ -1232,6 +1370,9 @@ describe("TranForm translation service selection", () => {
 
     act(() => googleOption.click());
     expect(resultSlugs()).toEqual(["openai"]);
+    expect(
+      container.querySelector('[data-testid="suggestions"]').dataset.apiSlug
+    ).toBe("openai");
 
     act(() => openAiOption.click());
     expect(resultSlugs()).toEqual([]);
@@ -1527,6 +1668,116 @@ describe("TranForm input focus and external text synchronization", () => {
       await Promise.resolve();
     });
     expect(setText).toHaveBeenLastCalledWith("bug");
+    act(() => root.unmount());
+  });
+
+  test("keeps a pasted draft when entering edit mode while text is unchanged", async () => {
+    const setText = jest.fn();
+    const readText = jest.fn().mockResolvedValue("Pasted draft text");
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { readText },
+    });
+    const { container, root } = renderTranForm({
+      text: "",
+      setText,
+      transApis: [],
+      simpleStyle: false,
+      autoFocusInput: false,
+      syncExternalTextWhileEditing: true,
+    });
+    await flushEffects();
+
+    const pasteButton = container.querySelector('button[title="paste"]');
+    expect(pasteButton).not.toBeNull();
+    await act(async () => {
+      pasteButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await flushEffects();
+
+    const sourceInput = container.querySelector(
+      '.kt-translation-source textarea:not([aria-hidden="true"])'
+    );
+    expect(sourceInput.value).toBe("Pasted draft text");
+    expect(setText).not.toHaveBeenCalled();
+    act(() => root.unmount());
+  });
+
+  test("still overwrites an editing draft when external text actually changes", async () => {
+    const setText = jest.fn();
+    const transApis = [];
+    const { container, rerender, root } = renderTranForm({
+      text: "first selection",
+      setText,
+      transApis,
+      simpleStyle: false,
+      autoFocusInput: false,
+      syncExternalTextWhileEditing: true,
+    });
+    await flushEffects();
+
+    const sourceInput = container.querySelector(
+      '.kt-translation-source textarea:not([aria-hidden="true"])'
+    );
+    act(() => sourceInput.focus());
+    await flushEffects();
+
+    // 键入未提交草稿并先断言该草稿在输入框显示
+    act(() => {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value"
+      ).set;
+      setValue.call(sourceInput, "Uncommitted draft");
+      sourceInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushEffects();
+    expect(sourceInput.value).toBe("Uncommitted draft");
+
+    // 随后重渲染并断言输入框内容被外部文本覆盖为 "next selection"
+    rerender({ text: "next selection" });
+    await flushEffects();
+
+    expect(sourceInput.value).toBe("next selection");
+    act(() => root.unmount());
+  });
+
+  test("overwrites an editing draft with host text when the sync flag flips on while text is unchanged", async () => {
+    const setText = jest.fn();
+    const transApis = [];
+    const { container, rerender, root } = renderTranForm({
+      text: "current selection",
+      setText,
+      transApis,
+      simpleStyle: false,
+      autoFocusInput: false,
+      syncExternalTextWhileEditing: false,
+    });
+    await flushEffects();
+
+    const sourceInput = container.querySelector(
+      '.kt-translation-source textarea:not([aria-hidden="true"])'
+    );
+    act(() => sourceInput.focus());
+    // 用户键入未提交草稿，随后宿主把 syncExternalTextWhileEditing 打开；
+    // text 未变，但选项 false→true 迁移应被视为一次同步触发，把宿主文本
+    // 覆盖到输入框（覆盖草稿）。
+    act(() => {
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value"
+      ).set;
+      setValue.call(sourceInput, "Unsubmitted draft");
+      sourceInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flushEffects();
+    expect(sourceInput.value).toBe("Unsubmitted draft");
+    rerender({ syncExternalTextWhileEditing: true });
+    await flushEffects();
+
+    expect(sourceInput.value).toBe("current selection");
+    expect(setText).not.toHaveBeenCalled();
     act(() => root.unmount());
   });
 });

@@ -2,8 +2,11 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import ImageTranslateBox from "./ImageTranslateBox";
-import ImageTranslateHeader from "./ImageTranslateHeader";
+import ImageTranslateHeader, {
+  ImageTranslateSettings,
+} from "./ImageTranslateHeader";
 import ImageTranslateContent from "./ImageTranslateContent";
+import DraggableResizable from "../Selection/DraggableResizable";
 import { sendBgMsg } from "../../libs/msg";
 import { MSG_IMAGE_TRANSLATE_EXECUTE } from "../../config/msg";
 
@@ -26,19 +29,27 @@ jest.mock("../../libs/browser", () => ({
     },
   },
 }));
-jest.mock("./ImageTranslateHeader", () => jest.fn(() => null));
+jest.mock("./ImageTranslateHeader", () => ({
+  __esModule: true,
+  default: jest.fn(() => null),
+  ImageTranslateSettings: jest.fn(() => null),
+}));
 jest.mock("./ImageTranslateContent", () => jest.fn(() => null));
 jest.mock("../Selection/DraggableResizable", () => {
   const React = require("react");
-  return ({ header, children }) =>
-    React.createElement("div", null, header, children);
+  return jest.fn(({ header, children }) =>
+    React.createElement("div", null, header, children)
+  );
 });
 
 describe("ImageTranslateBox staged actions", () => {
   let root;
   let container;
   let props;
-  const header = () => ImageTranslateHeader.mock.calls.slice(-1)[0][0];
+  const header = () => ({
+    ...ImageTranslateSettings.mock.calls.slice(-1)[0][0],
+    ...ImageTranslateContent.mock.calls.slice(-1)[0][0].actions.props,
+  });
   const content = () => ImageTranslateContent.mock.calls.slice(-1)[0][0];
   const regions = [{ order: 0, enabled: true, bbox: [0, 0, 100, 50] }];
   const scene = {
@@ -47,12 +58,16 @@ describe("ImageTranslateBox staged actions", () => {
   };
 
   beforeEach(() => {
+    DraggableResizable.mockImplementation(({ header, children }) =>
+      React.createElement("div", null, header, children)
+    );
     sendBgMsg.mockReset();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     props = {
       showBox: true,
+      setShowBox: jest.fn(),
       imageDataUrl: "data:image/png;base64,test",
       requestVersion: 1,
       selectedRegions: regions,
@@ -64,6 +79,16 @@ describe("ImageTranslateBox staged actions", () => {
     };
     act(() => root.render(<ImageTranslateBox {...props} />));
     sendBgMsg.mockClear();
+  });
+
+  test("keeps only the title in the fixed header and puts settings and results in the scrollable body", () => {
+    const panel = DraggableResizable.mock.calls.slice(-1)[0][0];
+    expect(panel.header.type).toBe(ImageTranslateHeader);
+    expect(
+      React.Children.toArray(panel.children).map((child) => child.type)
+    ).toEqual([ImageTranslateSettings, ImageTranslateContent]);
+    act(() => panel.header.props.onClose());
+    expect(props.setShowBox).toHaveBeenCalledWith(false);
   });
 
   test("reports task locking through completion and cancellation and blocks actions while the source is being cropped", async () => {
@@ -100,6 +125,35 @@ describe("ImageTranslateBox staged actions", () => {
     const count = sendBgMsg.mock.calls.length;
     await act(async () => header().onRunAction("all"));
     expect(sendBgMsg).toHaveBeenCalledTimes(count);
+  });
+
+  test("passes built-in and user VLM prompts to the image panel", () => {
+    const custom = {
+      slug: "my-vlm",
+      name: "My VLM",
+      category: "vlm prompt",
+      userPrompt: "Read text",
+    };
+    act(() =>
+      root.render(
+        <ImageTranslateBox
+          {...props}
+          setting={{ ...props.setting, prompts: [custom] }}
+        />
+      )
+    );
+    const prompts = header().prompts;
+    expect(prompts).toEqual(
+      expect.arrayContaining([expect.objectContaining({ slug: "my-vlm" })])
+    );
+    expect(
+      prompts.some(
+        (prompt) => prompt.category === "vlm prompt" && prompt.slug !== "my-vlm"
+      )
+    ).toBe(true);
+    expect(ImageTranslateHeader.mock.calls.slice(-1)[0][0]).not.toHaveProperty(
+      "onRunAction"
+    );
   });
 
   afterEach(() => {

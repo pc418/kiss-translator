@@ -465,6 +465,7 @@ export default function TranCont({
               text={trText}
               lang={toLang}
               title={i18n("read_aloud")}
+              stopTitle={i18n("stop_speaking")}
             />
           </>
         ) : (
@@ -588,7 +589,9 @@ export default function TranCont({
         ) : trText ? (
           <Stack direction="row" spacing={1} alignItems="flex-start">
             {loading && (
-              <Box sx={{ width: 12, height: 12, flex: "0 0 auto", mt: "0.35em" }}>
+              <Box
+                sx={{ width: 12, height: 12, flex: "0 0 auto", mt: "0.35em" }}
+              >
                 <CircularProgress
                   size={12}
                   aria-label={i18n("popup_translating")}
@@ -701,6 +704,7 @@ export default function TranCont({
                   text={trText}
                   lang={toLang}
                   title={i18n("read_aloud")}
+                  stopTitle={i18n("stop_speaking")}
                 />
               </Stack>
               {(trText.trim() || resultHeightLock.lockedHeight != null) && (

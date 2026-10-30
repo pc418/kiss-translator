@@ -103,7 +103,7 @@ const mockSetting = {
       apiSlug: "gpu-layout",
       apiType: "Plugin",
       provider: {
-        apiVersion: "1",
+        apiVersion: 1,
         implementation: { kind: "script", entry: "layout.js" },
         capabilities: {
           analyzeLayout: { handler: "layout", coordinates: true },
@@ -166,9 +166,10 @@ jest.mock("./PdfWorkspace", () => {
   const React = require("react");
   return React.forwardRef((props, ref) => {
     React.useImperativeHandle(ref, () => mockPdfWorkspaceActions);
+    const onStateChange = React.useRef(props.onStateChange);
     React.useEffect(() => {
-      if (props.onStateChange) {
-        props.onStateChange({
+      if (onStateChange.current) {
+        onStateChange.current({
           phase: "ready",
           progress: { done: 0, total: 10 },
           pdf: { numPages: 10 },
@@ -1651,10 +1652,10 @@ describe("FileTranslatePage (M2 UI)", () => {
     const buttons = container.querySelectorAll(".MuiButton-root");
     expect(buttons.length).toBeGreaterThan(0);
 
-    // 验证 Logo 链接指向 GitHub 仓库
-    const logoLink = container.querySelector(
-      'a[href="https://github.com/fishjar/kiss-translator"]'
-    );
+    // 验证 Logo 链接指向主页
+    const expectedHomepage =
+      process.env.REACT_APP_SITEURL || "https://kiss-translator.rayjar.com";
+    const logoLink = container.querySelector(`a[href="${expectedHomepage}"]`);
     expect(logoLink).not.toBeNull();
     expect(logoLink.getAttribute("target")).toBe("_blank");
 

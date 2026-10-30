@@ -12,8 +12,7 @@ beforeAll(() => {
 });
 const sha = "a".repeat(40);
 const manifest = {
-  manifestVersion: 1,
-  apiVersion: "1",
+  apiVersion: 1,
   id: "source-example",
   version: "1.0.0",
   services: [
@@ -107,6 +106,50 @@ test("plain ZIP addresses retain source and archive normalization never searches
     parsePackageSource("https://github.com/owner/repository/tree/main")
   ).toThrow();
 });
+
+test.each([
+  [{ kind: "page" }, "UNSUPPORTED_PLUGIN_KIND"],
+  [{ minHostVersion: "999999.0.0" }, "HOST_VERSION_UNSUPPORTED"],
+])(
+  "URL installs and pinned GitHub restoration enforce compatibility: %j",
+  async (requirements, code) => {
+    const incoming = {
+      ...files,
+      "manifest.json": strToU8(
+        JSON.stringify({ ...manifest, ...requirements })
+      ),
+    };
+    await expect(
+      downloadProviderSource("https://example.invalid/plugin.zip", async () =>
+        response(zipSync(incoming))
+      )
+    ).rejects.toMatchObject({ code });
+    const archive = zipSync(
+      Object.fromEntries(
+        Object.entries(incoming).map(([name, bytes]) => [
+          `repository-${sha}/${name}`,
+          bytes,
+        ])
+      )
+    );
+    const fetchImpl = jest.fn(async () => response(archive));
+    await expect(
+      downloadProviderSource(
+        {
+          kind: "github",
+          repoUrl: "https://github.com/owner/repository",
+          commitSha: sha,
+        },
+        fetchImpl,
+        { restore: true }
+      )
+    ).rejects.toMatchObject({ code });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe(
+      `https://codeload.github.com/owner/repository/zip/${sha}`
+    );
+  }
+);
 test("updates require identity and increasing manifest version, unchanged content is a no-op", () => {
   const previous = { manifest, integrity: "old" };
   expect(checkPackageReplacement(previous, { ...previous })).toBe(false);
@@ -143,11 +186,10 @@ test("metadata errors and hanging lookup share one abortable deadline", async ()
       () => new Promise(() => {}),
       { timeoutMs: 50, signal: controller.signal }
     );
-    const rejected = expect(result).rejects.toMatchObject({
-      code: "REQUEST_TIMEOUT",
-    });
-    jest.advanceTimersByTime(50);
-    await rejected;
+    await Promise.all([
+      expect(result).rejects.toMatchObject({ code: "REQUEST_TIMEOUT" }),
+      Promise.resolve().then(() => jest.advanceTimersByTime(50)),
+    ]);
     expect(jest.getTimerCount()).toBe(0);
   } finally {
     jest.useRealTimers();

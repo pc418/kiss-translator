@@ -15,7 +15,7 @@ import fs from "fs";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
-test("ASR duration setting has the legacy default, integer bounds and an editable invalid draft", async () => {
+test("ASR duration setting has the 20-second default, integer bounds and an editable invalid draft", async () => {
   const node = document.createElement("div");
   document.body.append(node);
   const root = createRoot(node);
@@ -29,7 +29,7 @@ test("ASR duration setting has the legacy default, integer bounds and an editabl
       root.render(<AsrDurationSetting api={api} onChange={onChange} />)
     );
     let input = node.querySelector("input");
-    expect(input.value).toBe("30");
+    expect(input.value).toBe("20");
     expect([input.min, input.max, input.step]).toEqual(["1", "300", "1"]);
     await act(async () => Simulate.change(input, { target: { value: "12" } }));
     expect(onChange).toHaveBeenCalledWith(12);
@@ -61,13 +61,49 @@ test("ASR duration setting has the legacy default, integer bounds and an editabl
 
 test.each([
   ["translate", false, {}, true],
-  ["translate", false, { nobatch: { systemPrompt: "" } }, false],
-  ["translate", true, { nobatch: { systemPrompt: "Single" } }, true],
-  ["translate", true, { batch: { userPrompt: "Batch" } }, false],
+  [
+    "translate",
+    false,
+    { nobatch: [{ id: "default", name: "Default", systemPrompt: "" }] },
+    false,
+  ],
+  [
+    "translate",
+    true,
+    { nobatch: [{ id: "default", name: "Default", systemPrompt: "Single" }] },
+    true,
+  ],
+  [
+    "translate",
+    true,
+    { batch: [{ id: "default", name: "Default", userPrompt: "Batch" }] },
+    false,
+  ],
   ["dictionary", false, {}, true],
-  ["dictionary", false, { dictionary: { userPrompt: "Dictionary" } }, false],
-  ["segmentSubtitle", false, { subtitle: { systemPrompt: "Subtitle" } }, false],
-  ["parseImage", false, { vlm: { systemPrompt: "Vision" } }, false],
+  [
+    "dictionary",
+    false,
+    {
+      dictionary: [
+        { id: "default", name: "Default", userPrompt: "Dictionary" },
+      ],
+    },
+    false,
+  ],
+  [
+    "segmentSubtitle",
+    false,
+    {
+      subtitle: [{ id: "default", name: "Default", systemPrompt: "Subtitle" }],
+    },
+    false,
+  ],
+  [
+    "parseImage",
+    false,
+    { vlm: [{ id: "default", name: "Default", systemPrompt: "Vision" }] },
+    false,
+  ],
 ])(
   "plugin default option availability follows the current slot: %s %s",
   async (capability, useBatchFetch, defaultPrompts, disabled) => {
@@ -172,7 +208,7 @@ test("shared header handles disabled/pinned and prompt selection has no preview"
     apiType: "Plugin",
     apiName: "Service",
     provider: {
-      apiVersion: "1",
+      apiVersion: 1,
       name: "Endpoint",
       source: {
         external: true,
@@ -181,10 +217,14 @@ test("shared header handles disabled/pinned and prompt selection has no preview"
       },
       capabilities: { translate: { handler: "translate" } },
       defaultPrompts: {
-        nobatch: {
-          systemPrompt: "Read-only {{text}}",
-          userPrompt: "{{items}}",
-        },
+        nobatch: [
+          {
+            id: "default",
+            name: "Default",
+            systemPrompt: "Read-only {{text}}",
+            userPrompt: "{{items}}",
+          },
+        ],
       },
     },
   };
@@ -215,13 +255,13 @@ test("shared header handles disabled/pinned and prompt selection has no preview"
   }
   try {
     await act(async () => root.render(<Harness />));
-    expect(node.textContent).toContain("外部插件 · Example Plugin");
+    expect(node.textContent).toContain("插件接口 · Example Plugin");
     expect(node.querySelector("textarea")).toBeNull();
     expect(node.textContent).toContain("插件内部默认");
     expect(node.textContent).not.toContain("复制提示词");
     expect(node.textContent).not.toContain("插件未公开默认提示词");
     expect(writeText).not.toHaveBeenCalled();
-    expect(api.provider.defaultPrompts.nobatch.systemPrompt).toBe(
+    expect(api.provider.defaultPrompts.nobatch[0].systemPrompt).toBe(
       "Read-only {{text}}"
     );
     await act(async () => node.querySelector('input[name="isPinned"]').click());
@@ -360,3 +400,27 @@ test.each([undefined, 30, 600])(
     }
   }
 );
+
+test("ASR-only services render no empty prompt group", async () => {
+  const node = document.createElement("div");
+  const root = createRoot(node);
+  try {
+    await act(async () =>
+      root.render(
+        <PluginPromptSettings
+          api={{
+            apiType: "Plugin",
+            provider: {
+              capabilities: { transcribe: { handler: "transcribe" } },
+            },
+          }}
+          prompts={[]}
+          onChange={jest.fn()}
+        />
+      )
+    );
+    expect(node.childElementCount).toBe(0);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});

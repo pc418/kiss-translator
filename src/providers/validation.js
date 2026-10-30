@@ -68,6 +68,31 @@ export function validateInput(capability, input) {
   checkPayloadBudget(input);
   const code = "INVALID_INPUT";
   requireValue(object(input), code, "Capability input must be an object.");
+  requireValue(
+    input.document === undefined ||
+      (object(input.document) && Object.values(input.document).every(text)),
+    code,
+    "Invalid document context."
+  );
+  requireValue(
+    input.glossary === undefined ||
+      (object(input.glossary) && Object.values(input.glossary).every(text)),
+    code,
+    "Invalid glossary."
+  );
+  requireValue(
+    input.tone === undefined || text(input.tone),
+    code,
+    "Invalid tone."
+  );
+  requireValue(
+    input.candidates === undefined ||
+      (Array.isArray(input.candidates) &&
+        input.candidates.length > 0 &&
+        input.candidates.every((value) => text(value) && value.trim())),
+    code,
+    "Invalid language candidates."
+  );
   if (capability === "translate") {
     items(input.items, code);
     translationProtocol(input);
@@ -126,7 +151,12 @@ export function validateInput(capability, input) {
   } else if (capability === "segmentSubtitle") {
     items(input.items, code);
     requireValue(
-      input.items.every(interval),
+      input.items.every(
+        (item) =>
+          interval(item) &&
+          (item.pauseMs === undefined ||
+            (finite(item.pauseMs) && item.pauseMs >= 0))
+      ),
       code,
       "Subtitle times must be ordered seconds."
     );
@@ -157,7 +187,11 @@ export function validateInput(capability, input) {
           question.instructions !== undefined &&
           (question.type === "noul" ||
             (question.type === "choice"
-              ? object(question.criteria) || Array.isArray(question.criteria)
+              ? object(question.criteria) &&
+                Object.keys(question.criteria).length > 0 &&
+                Object.keys(question.criteria).every(
+                  (key) => key.trim().length > 0
+                )
               : Array.isArray(question.criteria))),
         code,
         "Invalid decision question."
@@ -255,7 +289,7 @@ export function validateResult(capability, result, input, descriptor = {}) {
       code,
       "Missing subtitle items."
     );
-  } else if (capability === "detectLanguage")
+  } else if (capability === "detectLanguage") {
     requireValue(
       text(result.language) &&
         result.language.length > 0 &&
@@ -263,7 +297,12 @@ export function validateResult(capability, result, input, descriptor = {}) {
       code,
       "Invalid detected language."
     );
-  else if (capability === "suggest")
+    requireValue(
+      !input.candidates || input.candidates.includes(result.language),
+      code,
+      "Detected language is outside candidates."
+    );
+  } else if (capability === "suggest")
     requireValue(
       Array.isArray(result.items) && result.items.every(text),
       code,
@@ -314,15 +353,17 @@ export function validateResult(capability, result, input, descriptor = {}) {
       requireValue(
         object(answer) &&
           answer.type === question.type &&
-          probability(answer.confidence) &&
-          object(answer.action) &&
-          probability(answer.action.act_probability),
+          (answer.confidence === undefined || probability(answer.confidence)) &&
+          (answer.action === undefined ||
+            (object(answer.action) &&
+              probability(answer.action.act_probability))),
         code,
         "Invalid decision answer."
       );
       requireValue(
         question.type === "choice"
-          ? text(answer.choice)
+          ? text(answer.choice) &&
+              Object.hasOwn(question.criteria, answer.choice)
           : question.type === "score"
             ? finite(answer.score)
             : probability(answer.noul),

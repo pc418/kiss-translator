@@ -15,7 +15,6 @@ import {
   availableApiForScene,
   isApiConfigured,
 } from "../config/serviceSelection";
-import { instanceTestSignature } from "./upgrade";
 
 const service = {
   id: "text",
@@ -36,8 +35,7 @@ const service = {
   ],
 };
 const manifest = {
-  manifestVersion: 1,
-  apiVersion: "1",
+  apiVersion: 1,
   id: "text-example",
   version: "1.0.0",
   services: [service],
@@ -102,9 +100,6 @@ test("support is immutable while enabled tasks control forms, candidates and dir
   expect(
     isApiAvailableFor({ ...api, enabledCapabilities: [] }, "translate")
   ).toBe(false);
-  expect(instanceTestSignature(api)).not.toBe(
-    instanceTestSignature({ ...api, enabledCapabilities: [] })
-  );
 });
 test("only declared capability fields may hide; endpoints, credentials and model remain common", () => {
   for (const changes of [

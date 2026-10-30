@@ -1,3 +1,9 @@
+import { act, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { Simulate } from "react-dom/test-utils";
+import AddServiceMenu from "./AddServiceMenu";
+import OptionsTheme from "./OptionsTheme";
+import { ProviderSettings } from "./PluginInstanceFields";
 jest.mock("../../apis", () => ({ apiTranslate: jest.fn() }));
 jest.mock("../../providers/sceneInvocation", () => ({
   invokeScene: jest.fn(),
@@ -11,12 +17,6 @@ jest.mock("../../hooks/ColorMode", () => ({
 jest.mock("../../hooks/SystemColorScheme", () => ({
   useSystemDarkPreference: () => false,
 }));
-import { act, useState } from "react";
-import { createRoot } from "react-dom/client";
-import { Simulate } from "react-dom/test-utils";
-import AddServiceMenu from "./AddServiceMenu";
-import OptionsTheme from "./OptionsTheme";
-import { ProviderSettings } from "./PluginInstanceFields";
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 globalThis.crypto ||= require("crypto").webcrypto;
@@ -53,8 +53,7 @@ test("external submenu adds a default snapshot without authorization and disable
   mockPackages.push({
     id: "installed",
     manifest: {
-      manifestVersion: 1,
-      apiVersion: "1",
+      apiVersion: 1,
       id: "installed",
       name: "Installed",
       version: "1.0.0",
@@ -86,12 +85,12 @@ test("external submenu adds a default snapshot without authorization and disable
     await act(async () => root.render(<Harness />));
     await act(async () => Simulate.click(node.querySelector("button")));
     const parent = Array.from(node.querySelectorAll('[role="menuitem"]')).find(
-      (item) => item.textContent === "外部插件"
+      (item) => item.textContent === "插件接口"
     );
     await act(async () => Simulate.keyDown(parent, { key: "ArrowRight" }));
     const children = Array.from(
       node
-        .querySelector('[aria-label="外部插件"]')
+        .querySelector('[aria-label="插件接口"]')
         .querySelectorAll('[role="menuitem"]')
     );
     expect(
@@ -106,6 +105,7 @@ test("external submenu adds a default snapshot without authorization and disable
     );
     expect(onSelect).toHaveBeenCalledTimes(1);
     const api = onSelect.mock.calls[0][0];
+    expect(api.apiName).toBe("Installed · Text");
     expect(api.pluginConfig).toEqual({ model: "first" });
     expect(api.useStream).toBe(true);
     expect(api.provider.code).toContain("exports.chat");
