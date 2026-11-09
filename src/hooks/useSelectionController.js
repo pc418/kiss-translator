@@ -17,6 +17,7 @@ import {
   OPT_TRANBOX_TRIGGER_DBLCLICK,
   OPT_TRANBOX_INTERACT_CLICK,
   OPT_TRANBOX_INTERACT_DBLCLICK,
+  DEFAULT_TRANBOX_HOVER_DELAY,
 } from "../config";
 import {
   getMaxTranBoxX,
@@ -352,16 +353,22 @@ export default function useSelectionController({
   boxOffsetY,
   boxSize,
   setBoxPosition,
+  hideClickAway,
 }) {
   const {
     hideTranBtn = false,
     triggerMode,
+    triggerHoverDelay = DEFAULT_TRANBOX_HOVER_DELAY,
     btnPositionMode = OPT_TRANBOX_BTN_POSITION_FIXED,
     btnOffsetX = 0,
     btnOffsetY = 0,
     tranboxInteractMode = "-",
     skipLangs = [],
   } = tranboxSetting;
+
+  // Historical setting name: any falsy value pins the panel, while an absent
+  // one was never declared and must keep the pre-follow behaviour.
+  const isPinnedBox = hideClickAway !== undefined && !hideClickAway;
 
   const [showBox, updateShowBox] = useState(false);
   const [showBtn, setShowBtn] = useState(false);
@@ -374,6 +381,15 @@ export default function useSelectionController({
   const pendingSelectionRef = useRef(null);
   const selectionRevisionRef = useRef(0);
   const selectionAtPressRef = useRef(null);
+
+  // The follow gate runs after awaits, so it reads visibility from this mirror
+  // rather than from a value captured when the handler was created.
+  const showBoxRef = useRef(false);
+
+  useEffect(() => {
+    showBoxRef.current = showBox;
+  }, [showBox]);
+
   const setShowBox = useCallback((next) => {
     if (next === false) selectionRevisionRef.current += 1;
     updateShowBox(next);
@@ -561,7 +577,18 @@ export default function useSelectionController({
         return;
       }
 
-      if (snapshot.rect && followSelection) {
+      // A pinned panel the user is already looking at must stay put: moving it
+      // onto the fresh selection covers the text being translated, and a pinned
+      // panel never dismisses itself to uncover it again.
+      // Visibility is read here, after the awaits, because the panel may have
+      // been opened while this selection was still settling.
+      const panelIsVisible = showBoxRef.current;
+
+      if (
+        snapshot.rect &&
+        followSelection &&
+        (!isPinnedBox || !panelIsVisible)
+      ) {
         setBoxPosition(
           getFollowBoxPosition(snapshot.rect, boxOffsetX, boxOffsetY, boxSize)
         );
@@ -614,6 +641,7 @@ export default function useSelectionController({
       btnOffsetX,
       btnOffsetY,
       followSelection,
+      isPinnedBox,
       boxOffsetX,
       boxOffsetY,
       commitSelectionSnapshot,
@@ -800,5 +828,6 @@ export default function useSelectionController({
     handleOpenTranbox,
     handleToggleTranbox,
     btnEvent,
+    triggerHoverDelay,
   };
 }

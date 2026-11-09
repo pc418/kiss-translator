@@ -28,6 +28,7 @@ export default function Selection({
   translateVariants = true,
   parseLatex = false,
   extStyles,
+  rule,
 }) {
   const i18n = newI18n(uiLang || "zh");
   // 1. Manage the panel's size, position, simple mode, and hide-on-blur setting.
@@ -59,9 +60,11 @@ export default function Selection({
     handleOpenTranbox,
     handleToggleTranbox,
     btnEvent,
+    triggerHoverDelay,
   } = useSelectionController({
     tranboxSetting,
     followSelection,
+    hideClickAway,
     boxOffsetX,
     boxOffsetY,
     boxSize,
@@ -106,6 +109,7 @@ export default function Selection({
             langDetector={langDetector}
             translateVariants={translateVariants}
             parseLatex={parseLatex}
+            rule={rule}
             selectionContext={textContext}
             selectionSource={selectionSource}
           />
@@ -116,6 +120,7 @@ export default function Selection({
           <TranBtn
             position={position}
             btnEvent={btnEvent}
+            hoverDelay={triggerHoverDelay}
             label={i18n("translate", "Translate selection")}
             onTrigger={(e) => {
               e.stopPropagation();

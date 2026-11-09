@@ -1,3 +1,4 @@
+import { TERMINOLOGY_I18N } from "./locales/terminology";
 import { DIAGNOSTICS_I18N } from "./locales/diagnostics";
 import { YOUTUBE_CAPTIONS_I18N } from "./locales/youtubeCaptions";
 import { PROVIDER_PLUGINS_I18N } from "./locales/providerPlugins";
@@ -25,6 +26,7 @@ export const UI_LANGS = [
 ];
 
 export const I18N = {
+  ...TERMINOLOGY_I18N,
   ...DIAGNOSTICS_I18N,
   ...YOUTUBE_CAPTIONS_I18N,
   ...POPUP_I18N,
@@ -339,6 +341,24 @@ export const I18N = {
     ko: `이 모델은 사고를 완전히 비활성화할 수 없어 지원되는 최저 수준을 사용합니다.`,
     tr: `Bu model düşünmeyi tamamen devre dışı bırakamaz; desteklenen en düşük düzeyi kullanır.`,
     vi: "This model cannot disable thinking completely and will use its lowest supported level.",
+  },
+  thinking_required_helper: {
+    zh: `当前模型必须进行思考，且没有已确认的强度控制，无法关闭思考。`,
+    en: `This model requires thinking and has no confirmed effort control. Thinking cannot be disabled.`,
+    zh_TW: `目前模型必須進行思考，且沒有已確認的強度控制，無法關閉思考。`,
+    ja: `このモデルは思考が必須で、確認済みの強度設定がないため無効化できません。`,
+    ko: `이 모델은 사고가 필수이며 확인된 강도 설정이 없어 비활성화할 수 없습니다.`,
+    tr: `Bu modelde düşünme zorunludur ve doğrulanmış bir yoğunluk ayarı yoktur.`,
+    vi: `Mô hình này bắt buộc suy luận và không có mức điều chỉnh đã xác nhận. Không thể tắt suy luận.`,
+  },
+  thinking_between_tools_helper: {
+    zh: `将关闭回答前的思考；使用工具时，工具调用之间仍可能进行思考。`,
+    en: `Up-front thinking will be disabled. Thinking between tool calls may still occur.`,
+    zh_TW: `將關閉回答前的思考；使用工具時，工具呼叫之間仍可能進行思考。`,
+    ja: `回答前の思考を無効化します。ツール呼び出しの間には思考する場合があります。`,
+    ko: `응답 전 사고를 비활성화합니다. 도구 호출 사이에는 사고할 수 있습니다.`,
+    tr: `Yanıt öncesi düşünme kapatılır. Araç çağrıları arasında düşünme devam edebilir.`,
+    vi: `Tắt suy luận trước câu trả lời. Mô hình vẫn có thể suy luận giữa các lần gọi công cụ.`,
   },
   thinking_effort: {
     zh: `思考强度`,
@@ -4244,6 +4264,24 @@ export const I18N = {
     ko: `호버 트리거`,
     tr: `Fareyle Üzerine Gelme Tetikleyicisi`,
     vi: "Kích hoạt khi di chuột",
+  },
+  trigger_hover_delay: {
+    zh: `悬停触发延迟(毫秒)`,
+    en: `Hover Trigger Delay (ms)`,
+    zh_TW: `懸停觸發延遲(毫秒)`,
+    ja: `ホバートリガー遅延(ミリ秒)`,
+    ko: `호버 트리거 지연(밀리초)`,
+    tr: `Üzerine Gelme Gecikmesi (ms)`,
+    vi: "Độ trễ kích hoạt khi di chuột (ms)",
+  },
+  trigger_hover_delay_helper: {
+    zh: `鼠标在悬浮球上停留该时长后才触发翻译，避免划词后误触；设为 0 则立即触发`,
+    en: `The pointer must rest on the trigger ball for this long before translating, to avoid accidental triggers; 0 fires immediately`,
+    zh_TW: `滑鼠在懸浮球上停留該時長後才觸發翻譯，避免劃詞後誤觸；設為 0 則立即觸發`,
+    ja: `トリガーボール上にこの時間ポインタを置いてから翻訳を開始します。誤操作を防ぎます。0 で即時発火`,
+    ko: `포인터가 트리거 볼 위에 이 시간 동안 머물러야 번역이 시작됩니다. 실수 방지용이며 0이면 즉시 실행됩니다`,
+    tr: `İşaretçi tetikleyici topun üzerinde bu süre boyunca kalmalıdır; yanlış tetiklemeyi önler, 0 anında çalıştırır`,
+    vi: "Con trỏ phải nằm trên nút kích hoạt trong khoảng thời gian này trước khi dịch, tránh kích hoạt nhầm; 0 kích hoạt ngay",
   },
   trigger_select: {
     zh: `选中触发`,

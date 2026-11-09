@@ -1,3 +1,10 @@
+import { terminologyWarningHandler } from "./terminologyWarning";
+import {
+  compileTerminology,
+  terminologySourceList,
+  EMPTY_TERMINOLOGY_TABLES,
+} from "./terminology";
+import { loadTerminologySnapshot } from "./terminologyStorage";
 import { TouchParagraph, touchParent, isTouchExcluded } from "./touchParagraph";
 import { isInBlacklist } from "./blacklist";
 import {
@@ -63,14 +70,20 @@ import {
   isInNonContent,
   NON_CONTENT_SELECTOR,
   visitTranslationTargets,
+  BLOCK_LAYOUT_TAGS,
+  getNodeLayout,
+  hasBlockLayout,
   isInlineHidden,
   isInInlineHidden,
   getInlineVisibleText,
   cloneWithoutInlineHidden,
+  getPreservedInlineAncestor,
 } from "./translationTargets";
 import { normalizeRuleApi } from "./apiSelection";
 import { isSameStorageValue } from "./storageEquality";
 import { KISS_UI_SELECTOR } from "./kissUi";
+
+const PARAGRAPH_METADATA_SELECTOR = "script, style, template";
 
 // 判定“这次按住在翻译触发前就已经在移动”的最小位移 (CSS 像素)。
 // 用于区分两种按住：一按下就开始移动（本意是拖拽/手势）与按住不动、
@@ -93,92 +106,11 @@ function getRuntimeApiSettings(api) {
 }
 
 export class Translator {
-  // 块级判定缓存，避免对同一节点高频调用 window.getComputedStyle(el) 造成浏览器回流（Reflow）
-  static displayCache = new WeakMap();
-
   // HTML 元素标签分类
   static TAGS = {
     // 强制换行标签
     BREAK_LINE: new Set(["BR", "WBR"]),
-    // 块级标签
-    BLOCK: new Set([
-      "ADDRESS",
-      "ARTICLE",
-      "ASIDE",
-      "BLOCKQUOTE",
-      "CANVAS",
-      "DD",
-      "DIV",
-      "DL",
-      "DT",
-      "FIELDSET",
-      "FIGCAPTION",
-      "FIGURE",
-      "FOOTER",
-      "FORM",
-      "H1",
-      "H2",
-      "H3",
-      "H4",
-      "H5",
-      "H6",
-      "HEADER",
-      "HR",
-      "LI",
-      "MAIN",
-      "NAV",
-      "NOSCRIPT",
-      "OL",
-      "P",
-      "PRE",
-      "SECTION",
-      "TABLE",
-      "TFOOT",
-      "UL",
-      "VIDEO",
-    ]),
-    // 行级标签
-    INLINE: new Set([
-      // "A",
-      "ABBR",
-      "ACRONYM",
-      "B",
-      "BDO",
-      "BIG",
-      "BR",
-      "BUTTON",
-      "CITE",
-      "CODE",
-      "DFN",
-      "DEL",
-      "FONT",
-      "EM",
-      "I",
-      "IMG",
-      "INPUT",
-      "INS",
-      "KBD",
-      "LABEL",
-      "MAP",
-      "MARK",
-      "OBJECT",
-      "OUTPUT",
-      "Q",
-      "RUBY",
-      "SAMP",
-      "SCRIPT",
-      "SELECT",
-      "SMALL",
-      // "SPAN",
-      "STRONG",
-      "SUB",
-      "SUP",
-      "TEXTAREA",
-      "TIME",
-      "TT",
-      "U",
-      "VAR",
-    ]),
+    BLOCK: BLOCK_LAYOUT_TAGS,
     // 需要被作为占位符替换以保持原文格式不被机器翻译破坏的复杂标签
     REPLACE: new Set([
       "ABBR",
@@ -295,45 +227,12 @@ export class Translator {
 
   /**
    * 判断目标元素是否为块级（Block）节点
-   * // REVIEW: 缓存失效风险。使用 WeakMap 缓存了元素的 block 判定结果，如果在页面运行期间，
-   * // 某个元素的 display 样式被动态修改（如从 none 变更为 block，或者从 inline 变更为 block），
-   * // displayCache 中缓存的旧状态不会被失效或刷新，这可能导致后续的扫描和翻译无法准确处理该节点。
    * @param {Node} el - 待检测的 DOM 节点
    * @returns {boolean}
    */
   static isBlockNode(el) {
     if (!Translator.isElementOrFragment(el)) return false;
-
-    // 若有显式的 inline 属性设置，直接判定非块级
-    if (el.attributes?.display?.value?.includes("inline")) return false;
-    // 若有显式的 block 属性设置，直接判定为块级
-    if (el.attributes?.display?.value?.includes("block")) return true;
-
-    // 若标签在内联标签集合中，直接判定非块级
-    if (Translator.TAGS.INLINE.has(el.nodeName?.toUpperCase())) return false;
-    // 若标签在块级标签集合中，直接判定为块级
-    if (Translator.TAGS.BLOCK.has(el.nodeName?.toUpperCase())) return true;
-
-    // 优先读取 WeakMap 缓存
-    if (Translator.displayCache.has(el)) {
-      return Translator.displayCache.get(el);
-    }
-
-    // 自定义组件标签 (如 <gg-article>) 默认 computed display 常为 inline，但如果内部包含块级元素，则属于结构容器
-    if (el.nodeName?.includes("-")) {
-      Translator.displayCache.set(el, false);
-      for (const child of el.children) {
-        if (Translator.isBlockNode(child)) {
-          Translator.displayCache.set(el, true);
-          return true;
-        }
-      }
-    }
-
-    // 降级回滚：调用 getComputedStyle 进行高开销的布局样式计算
-    const isBlock = !window.getComputedStyle(el).display.startsWith("inline");
-    Translator.displayCache.set(el, isBlock);
-    return isBlock;
+    return hasBlockLayout(el);
   }
 
   // 判断是否包含块级子元素
@@ -397,6 +296,11 @@ export class Translator {
   #translationTagName = APP_LCNAME; // 翻译容器的标签名
   #eventName = ""; // 通信事件名称
   #docInfo = {}; // 网页信息
+  #terminologyWarning = null;
+  #terminologyTables = [];
+  #terminologyReady = false;
+  #terminologyLoading = null;
+  #requestTerminologySnapshots = new Map();
   #glossary = {}; // AI词典
   #blockSelectorInvalid = false; // 自定义块级选择器是否已确认无效
   #textClass = {}; // 译文样式class
@@ -752,30 +656,44 @@ export class Translator {
     return selectors.join(", ");
   }
 
-  #isIgnoredElement(node) {
-    return (
-      node?.nodeType === Node.ELEMENT_NODE &&
-      node.matches?.(this.#ignoreSelector)
-    );
+  // 行内可见文本的统一跳过口径（#getSourceText 与句拆 textLength/句末
+  // 判断共用）：非内容节点、KISS UI 节点、ignoreSelector 命中（keepSelector
+  // 行内保留除外）中的文本一律不计。
+  #getContentRole(
+    element,
+    rule = this.#rule,
+    readLayout = getNodeLayout,
+    ignoreSelector = this.#getIgnoreSelector(rule)
+  ) {
+    if (!Translator.isElement(element)) return "translate";
+    if (
+      readLayout(element) === "hidden" ||
+      element.matches(NON_CONTENT_SELECTOR)
+    )
+      return "skip";
+    const ignored = element.matches(ignoreSelector);
+    if (ignored && element.matches(Translator.KISS_IGNORE_SELECTOR))
+      return "skip";
+    if (this.#isKeptInline(element, rule, readLayout)) return "keep";
+    return ignored ? "skip" : "translate";
+  }
+
+  #isInlineContentSkipped(element) {
+    return this.#getContentRole(element) === "skip";
   }
 
   #getSourceText(node) {
     if (isInNonContent(node) || this.#isKissIgnoredNode(node)) return "";
-    const ignoreSelector = this.#ignoreSelector;
-    return getInlineVisibleText(
-      node,
-      (element) =>
-        element.matches(NON_CONTENT_SELECTOR) ||
-        element.matches(Translator.KISS_IGNORE_SELECTOR) ||
-        (element.matches(ignoreSelector) && !this.#isKeptInline(element))
+    return getInlineVisibleText(node, (element) =>
+      this.#isInlineContentSkipped(element)
     );
   }
 
-  #matchesBlockSelector(node) {
-    const selector = this.#rule.blockSelector?.trim();
+  #matchesBlockSelector(node, rule = this.#rule) {
+    const selector = rule.blockSelector?.trim();
     if (
       !selector ||
-      this.#blockSelectorInvalid ||
+      (rule === this.#rule && this.#blockSelectorInvalid) ||
       !Translator.isElement(node)
     ) {
       return false;
@@ -784,7 +702,7 @@ export class Translator {
     try {
       return node.matches(selector);
     } catch (err) {
-      this.#blockSelectorInvalid = true;
+      if (rule === this.#rule) this.#blockSelectorInvalid = true;
       logger.child("translator").warn("invalid blockSelector", err);
       return false;
     }
@@ -811,7 +729,11 @@ export class Translator {
 
   #isBlockNode(node) {
     if (this.#matchesBlockSelector(node)) return true;
-    return Translator.isBlockNode(node);
+    return hasBlockLayout(
+      node,
+      (child) => this.#matchesBlockSelector(child),
+      (child) => this.#getContentRole(child) !== "translate"
+    );
   }
 
   #hasBlockNode(node) {
@@ -1029,8 +951,11 @@ export class Translator {
 
   #initPlainTextPre(pre) {
     if (isInInlineHidden(pre)) return;
-    // Preserve structured sources so hidden descendants are not flattened into text.
-    if (Array.from(pre.querySelectorAll("[style]")).some(isInlineHidden))
+    // 保留原有结构，避免将隐藏子节点和元数据展平成正文。
+    if (
+      pre.querySelector(PARAGRAPH_METADATA_SELECTOR) ||
+      Array.from(pre.querySelectorAll("*")).some(isInlineHidden)
+    )
       return;
     if (pre.dataset.kissPreprocessed === "true") {
       return;
@@ -1342,6 +1267,23 @@ export class Translator {
     this.#combinedTermsRegex = null;
     this.#termMatcher = null;
 
+    const sources = [
+      ...terminologySourceList(this.#rule),
+      this.#apiSetting || {},
+    ];
+    if (
+      this.#rule.terminologySources ||
+      sources.some(
+        (source) =>
+          source.termsList?.length || (source !== this.#rule && source.terms)
+      )
+    ) {
+      const resolved = compileTerminology(sources, this.#terminologyTables);
+      this.#termEntries = resolved.normalEntries;
+      this.#combinedTermsRegex = buildTermsRegex(resolved.normalEntries);
+      this.#termMatcher = buildTermsMatcher(resolved.normalEntries);
+      return;
+    }
     if (!termsString || typeof termsString !== "string") return;
 
     // 纯函数解析：按 key.length 降序、同 key 去重、非法正则收集。
@@ -1474,6 +1416,14 @@ export class Translator {
             this.#queueForRescan(mutation.target.parentElement, false, true);
           }
         } else if (mutation.type === "childList") {
+          if (
+            getPreservedInlineAncestor(mutation.target, (node) =>
+              this.#isKeptInline(node)
+            )
+          ) {
+            this.#queueForRescan(mutation.target, false, true);
+            continue;
+          }
           let nodes = new Set();
           let hasText = false;
           if (
@@ -2300,7 +2250,6 @@ export class Translator {
     let current;
     while ((current = walker.nextNode())) {
       if (!current.nodeValue?.trim()) continue;
-      if (isInNonContent(current)) continue;
       if (leaf) return null; // 存在多个非空文本节点时不下钻
       leaf = current.parentElement;
     }
@@ -2322,7 +2271,6 @@ export class Translator {
     while ((current = walker.nextNode())) {
       const text = current.nodeValue?.trim() || "";
       if (!text) continue;
-      if (isInNonContent(current)) continue;
       if (
         current.parentElement?.closest?.(`.${Translator.KISS_CLASS.warpper}`)
       ) {
@@ -2753,14 +2701,18 @@ export class Translator {
 
   // 向上查找发生变化的块级元素
   #findChangeContainer(startNode) {
+    const preserved = getPreservedInlineAncestor(startNode, (node) =>
+      this.#isKeptInline(node)
+    );
+    const scanStart = preserved ? preserved.parentElement : startNode;
     if (
-      !Translator.isElementOrFragment(startNode) ||
-      startNode.closest?.(this.#ignoreSelector)
+      !Translator.isElementOrFragment(scanStart) ||
+      scanStart.closest?.(this.#ignoreSelector)
     ) {
       return null;
     }
 
-    let current = startNode;
+    let current = scanStart;
     while (current && current !== document.body) {
       if (current.classList?.contains(Translator.KISS_CLASS.original)) {
         current = current.parentElement;
@@ -2836,6 +2788,10 @@ export class Translator {
     if (!container) return;
 
     if (!preserveTranslations) {
+      const preserved = getPreservedInlineAncestor(changedNode, (node) =>
+        this.#isKeptInline(node)
+      );
+      if (preserved) this.#cleanupAllTranslations(preserved);
       this.#processedNodes.delete(container); // 删除处理状态，允许重新翻译
       if (preserveDescendants) {
         this.#cleanupUnitTranslations(container);
@@ -2935,18 +2891,31 @@ export class Translator {
   }
 
   #targetOptions(rule = this.#rule) {
+    // One synchronous scan owns these snapshots. Later scans always read live
+    // styles again, including after a formula or component changes display.
+    const layouts = new WeakMap();
+    const contentRoles = new WeakMap();
+    const ignoreSelector = this.#getIgnoreSelector(rule);
+    const readLayout = (node) => {
+      if (!layouts.has(node)) layouts.set(node, getNodeLayout(node));
+      return layouts.get(node);
+    };
+    const isPreserved = (node) => {
+      if (!contentRoles.has(node))
+        contentRoles.set(
+          node,
+          this.#getContentRole(node, rule, readLayout, ignoreSelector)
+        );
+      return contentRoles.get(node) !== "translate";
+    };
+    const isForcedBlock = (node) => this.#matchesBlockSelector(node, rule);
     return {
       ...rule,
-      ignoreSelector: this.#getIgnoreSelector(rule),
-      isBlock: (node) => {
-        try {
-          if (rule.blockSelector && node.matches?.(rule.blockSelector))
-            return true;
-        } catch {
-          /* Invalid legacy block selectors fall back to tag/display. */
-        }
-        return Translator.isBlockNode(node);
-      },
+      ignoreSelector,
+      getLayout: readLayout,
+      isBlock: (node) =>
+        hasBlockLayout(node, isForcedBlock, isPreserved, readLayout),
+      isPreservedInline: (node) => this.#isKeptInline(node, rule, readLayout),
       hasText: Translator.hasTextNode,
       wrapperClass: Translator.KISS_CLASS.warpper,
     };
@@ -3379,9 +3348,23 @@ export class Translator {
     let textLength = 0;
 
     [...parentNode.childNodes].forEach((node) => {
-      textLength += node.textContent.length;
+      if (this.#getParagraphAuxiliaryRole(node)) return;
+      // 文本长度与句末判断同 #getSourceText 过滤口径：元素子节点统一走
+      // getInlineVisibleText（auxiliary + 共享跳过谓词），KISS UI / 忽略
+      // 元素（含无元素子级的叶子元素）文本不计数、不参与句末判断；文本
+      // 节点维持 textContent 原状。
+      const text =
+        node.nodeType === Node.ELEMENT_NODE
+          ? getInlineVisibleText(
+              node,
+              (element) =>
+                Boolean(this.#getParagraphAuxiliaryRole(element)) ||
+                this.#isInlineContentSkipped(element)
+            )
+          : node.textContent;
+      textLength += text.length;
 
-      const isSentenceEnd = sentenceEndRegexForTest.test(node.textContent);
+      const isSentenceEnd = sentenceEndRegexForTest.test(text);
       if (
         !isSentenceEnd ||
         node.nextSibling?.nodeName?.toUpperCase() === "BR"
@@ -3419,7 +3402,7 @@ export class Translator {
             child.replaceWith(document.createTextNode(child.textContent));
           } else if (child.classList.contains(Translator.KISS_CLASS.br)) {
             child.remove();
-          } else if (!this.#shouldBreak(child)) {
+          } else if (!this.#shouldBreak(child, true)) {
             stack.push(child);
           }
         }
@@ -3454,50 +3437,62 @@ export class Translator {
   }
 
   // Only inline keep elements may bypass configurable ignores inside a paragraph.
-  #isKeptInline(node) {
+  #isKeptInline(node, rule = this.#rule, readLayout = getNodeLayout) {
     if (!Translator.isElement(node)) return false;
     try {
-      return node.matches(this.#rule.keepSelector) && !this.#isBlockNode(node);
+      return (
+        node.matches(rule.keepSelector) &&
+        !node.matches(NON_CONTENT_SELECTOR) &&
+        !this.#isKissIgnoredNode(node) &&
+        !["hidden", "block"].includes(readLayout(node)) &&
+        !this.#matchesBlockSelector(node, rule)
+      );
     } catch (err) {
       logger
         .child("translator")
-        .warn("keepSelector match error", this.#rule.keepSelector, err);
+        .warn("keepSelector match error", rule.keepSelector, err);
       return false;
     }
   }
 
-  // 判断是否需要换行
-  #shouldBreak(node) {
-    if (!Translator.isElementOrFragment(node)) return false;
+  /**
+   * 不生成布局盒的节点作为辅助节点，不因标签类型中断段落。
+   * @param {Node} node 待判断的节点。
+   * @returns {"boundary" | "auxiliary" | undefined}
+   *   `"boundary"` 表示在此结束当前翻译组。
+   *   `"auxiliary"` 表示保留在原文节点组中，继续分组，且节点内容不送翻。
+   *   `undefined` 表示交由常规段落边界规则处理。
+   */
+  #getParagraphAuxiliaryRole(node) {
+    if (!Translator.isElement(node)) return undefined;
     if (
-      isInlineHidden(node) ||
-      isInNonContent(node) ||
-      this.#isKissIgnoredNode(node)
+      this.#matchesBlockSelector(node) ||
+      this.#isKissIgnoredNode(node) ||
+      node.localName === this.#translationTagName
     )
-      return true;
+      return "boundary";
+    if (this.#getContentRole(node) !== "skip") return undefined;
+    if (isInlineHidden(node) || node.matches(PARAGRAPH_METADATA_SELECTOR))
+      return "auxiliary";
+    if (Translator.TAGS.BREAK_LINE.has(node.tagName) || this.#isBlockNode(node))
+      return "boundary";
+    return "auxiliary";
+  }
+
+  // Group boundaries and recursion stops differ: skipped inline subtrees are
+  // retained in the source group, but cleanup must never enter them.
+  #shouldBreak(node, breakAtAuxiliary = false) {
+    if (!Translator.isElementOrFragment(node)) return false;
+    const auxiliaryRole = this.#getParagraphAuxiliaryRole(node);
+    if (auxiliaryRole) return breakAtAuxiliary || auxiliaryRole === "boundary";
     if (this.#isKeptInline(node)) return false;
-
-    if (
-      Translator.TAGS.BREAK_LINE.has(node.nodeName?.toUpperCase()) ||
-      node.matches?.(this.#ignoreSelector) ||
-      node.nodeName?.toLowerCase() === this.#translationTagName
-    ) {
+    if (Translator.TAGS.BREAK_LINE.has(node.nodeName?.toUpperCase()))
       return true;
-    }
-
-    if (this.#rule.autoScan === "true" && this.#isBlockNode(node)) {
-      return true;
-    }
-
-    if (
-      this.#rule.autoScan === "false" &&
-      (node.matches(this.#rule.selector) ||
-        node.querySelector(this.#rule.selector))
-    ) {
-      return true;
-    }
-
-    return false;
+    if (this.#rule.autoScan === "true") return this.#isBlockNode(node);
+    return Boolean(
+      node.matches?.(this.#rule.selector) ||
+        node.querySelector?.(this.#rule.selector)
+    );
   }
 
   // 过滤文本
@@ -3845,9 +3840,21 @@ export class Translator {
     let wrapper = null;
 
     try {
+      const selectedApi = options.touch
+        ? this.#hoverBubbleApiSetting
+        : this.#apiSetting;
+      let terminology = this.#prepareRequestTerminology(selectedApi);
+      if (terminology.then) terminology = await terminology;
+      if (
+        signal.aborted ||
+        currentRunId !== this.#runId ||
+        (options.valid && !options.valid())
+      )
+        return;
       const [processedString, placeholderMap] = this.#serializeForTranslation(
         nodes,
-        termsStyle
+        termsStyle,
+        terminology
       );
       if (this.#isInvalidText(processedString)) return;
 
@@ -3992,8 +3999,10 @@ export class Translator {
           processedString,
           deLang,
           onStreamChunk,
-          options.touch ? this.#hoverBubbleApiSetting : null,
-          signal
+          options.touch ? selectedApi : null,
+          signal,
+          true,
+          terminology
         );
         translatedText = result.trText;
         isSameLang = result.isSame;
@@ -4116,7 +4125,12 @@ export class Translator {
         nodes
       );
     } catch (err) {
-      if (signal.aborted || currentRunId !== this.#runId) return;
+      if (
+        signal.aborted ||
+        currentRunId !== this.#runId ||
+        (options.valid && !options.valid())
+      )
+        return;
       // 容器已被还原移除时丢弃过期失败结果，避免 “Request terminated” 分支的
       // #cleanupDirectTranslations(hostNode) 误删宿主上随后产生的新译文，
       // 也避免在已脱离文档的容器里渲染重试按钮。
@@ -4124,6 +4138,10 @@ export class Translator {
 
       const errorText = this.#formatTranslateError(err);
       logger.child("translator").error("translate group error: ", errorText);
+      if (!wrapper) {
+        this.#processedNodes.delete(hostNode);
+        return;
+      }
       if (err?.message === "Request terminated") {
         this.#cleanupDirectTranslations(hostNode);
         return;
@@ -4131,25 +4149,19 @@ export class Translator {
 
       // 失败重试按钮
       try {
-        const lastWrapper = hostNode.querySelector(
-          `:scope > .${Translator.KISS_CLASS.warpper}:last-of-type`
-        );
-        if (lastWrapper) {
-          const inner = lastWrapper.querySelector(
-            `.${Translator.KISS_CLASS.inner}`
-          );
-          if (inner) {
-            inner.textContent = "";
-            const retryNode = this.#createRetryErrorNode(errorText, () => {
-              this.#withViewportAnchor(() => {
-                touchTranslationOwners.delete(lastWrapper);
-                lastWrapper.remove();
-              });
-              this.#processedNodes.delete(hostNode);
-              this.#translateNodeGroup(nodes, hostNode, deLang, options);
+        // 只处理本次请求自己的 wrapper：宿主上可能还有其他分组已成功的译文
+        const inner = wrapper.querySelector(`.${Translator.KISS_CLASS.inner}`);
+        if (inner) {
+          inner.textContent = "";
+          const retryNode = this.#createRetryErrorNode(errorText, () => {
+            this.#withViewportAnchor(() => {
+              touchTranslationOwners.delete(wrapper);
+              wrapper.remove();
             });
-            inner.appendChild(retryNode);
-          }
+            this.#processedNodes.delete(hostNode);
+            this.#translateNodeGroup(nodes, hostNode, deLang, options);
+          });
+          inner.appendChild(retryNode);
         }
       } catch (retryErr) {
         logger.child("translator").warn("retry icon error: ", retryErr.message);
@@ -4466,12 +4478,23 @@ overflow-wrap: anywhere !important;`;
         return;
       }
 
+      const selectedApi = this.#hoverBubbleApiSetting;
+      let terminology = this.#prepareRequestTerminology(selectedApi);
+      if (terminology.then) terminology = await terminology;
+      if (
+        signal.aborted ||
+        this.#hoverBubbleRunId !== currentRunId ||
+        this.#hoverBubbleTarget !== node
+      )
+        return;
       const { trText, isSame } = await this.#translateFetch(
         text,
         deLang,
         null,
-        this.#hoverBubbleApiSetting,
-        signal
+        selectedApi,
+        signal,
+        false,
+        terminology
       );
       if (
         signal.aborted ||
@@ -4504,7 +4527,12 @@ overflow-wrap: anywhere !important;`;
   }
 
   // 处理节点转为翻译字符串
-  #serializeForTranslation(nodes, termsStyle) {
+  #serializeForTranslation(nodes, termsStyle, terminology) {
+    const termEntries =
+      terminology?.resolved.normalEntries || this.#termEntries;
+    const termMatcher = terminology
+      ? terminology.matcher
+      : this.#termMatcher || this.#combinedTermsRegex;
     let replaceCounter = 0; // {{n}}
     let wrapCounter = 0; // <tagn>
     const placeholderMap = new Map();
@@ -4528,22 +4556,20 @@ overflow-wrap: anywhere !important;`;
 
       // 文本节点
       if (node.nodeType === Node.TEXT_NODE) {
-        if (isInNonContent(node)) return "";
         let text = node.textContent;
-        if (!text.trim()) return "";
 
         // 专业术语替换：matcher 一次物化（热路径零编译），applyTermReplace 内部重置 lastIndex
-        if (this.#combinedTermsRegex) {
+        if (termMatcher) {
           const { output } = applyTermReplace(
             text,
-            this.#termEntries,
+            termEntries,
             (termEntry, fullMatch) => {
               const termValue = termEntry.value;
               return pushReplace(
                 `<i class="${Translator.KISS_CLASS.term}" style="${termsStyle}">${termValue || fullMatch}</i>`
               );
             },
-            this.#termMatcher || this.#combinedTermsRegex
+            termMatcher
           );
           text = output;
         }
@@ -4553,17 +4579,15 @@ overflow-wrap: anywhere !important;`;
 
       // 元素节点
       if (node.nodeType === Node.ELEMENT_NODE) {
-        if (isInNonContent(node) || this.#isKissIgnoredNode(node)) return "";
+        const contentRole = this.#getContentRole(node);
+        if (contentRole === "skip") return "";
 
         // 收藏词高亮只影响原文显示，不应改变翻译请求的结构
         if (node.classList.contains(Translator.KISS_CLASS.highlight)) {
           return Array.from(node.childNodes, traverse).join("");
         }
 
-        const keptInline = this.#isKeptInline(node);
-        if (this.#isIgnoredElement(node) && !keptInline) {
-          return "";
-        }
+        const keptInline = contentRole === "keep";
 
         if (
           (this.#rule.hasRichText === "true" &&
@@ -4604,8 +4628,6 @@ overflow-wrap: anywhere !important;`;
               .warn("traverse child error", child.nodeName, err);
           }
         });
-
-        if (!innerContent) return "";
 
         if (
           this.#rule.hasRichText === "true" &&
@@ -4727,21 +4749,66 @@ overflow-wrap: anywhere !important;`;
     return result;
   }
 
+  // Keep each request's matcher, glossary and API signature on the same snapshot.
+  #prepareRequestTerminology(api = {}) {
+    const sources = [...terminologySourceList(this.#rule), api];
+    const key = JSON.stringify(
+      sources.map(({ terms, aiTerms, termsList }) => [
+        terms || "",
+        aiTerms || "",
+        termsList || [],
+      ])
+    );
+    if (this.#requestTerminologySnapshots.has(key))
+      return this.#requestTerminologySnapshots.get(key);
+    const compile = (tables) => {
+      const resolved = compileTerminology(sources, tables);
+      return {
+        tables,
+        resolved,
+        matcher: buildTermsMatcher(resolved.normalEntries),
+      };
+    };
+    const ids = sources.flatMap((source) => source.termsList || []);
+    if (
+      !ids.length ||
+      (this.#terminologyReady &&
+        ids.every((id) =>
+          [...terminologySourceList(this.#rule), this.#apiSetting || {}].some(
+            (source) => source.termsList?.includes(id)
+          )
+        ))
+    ) {
+      const snapshot = compile(
+        ids.length ? this.#terminologyTables : EMPTY_TERMINOLOGY_TABLES
+      );
+      this.#requestTerminologySnapshots.set(key, snapshot);
+      return snapshot;
+    }
+    const pending = loadTerminologySnapshot(sources)
+      .then(compile)
+      .finally(() => {
+        if (this.#requestTerminologySnapshots.get(key) === pending)
+          this.#requestTerminologySnapshots.delete(key);
+      });
+    this.#requestTerminologySnapshots.set(key, pending);
+    return pending;
+  }
+
   // 发起翻译请求
   async #translateFetch(
     text,
     deLang = "",
     onStreamChunk = null,
     apiSettingOverride = null,
-    signal = this.#translationController.signal
+    signal = this.#translationController.signal,
+    normalTermsApplied = true,
+    terminology = null
   ) {
     const { toLang, transStartHook } = this.#rule;
     const fromLang = deLang || this.#rule.fromLang;
     const hoverScene = apiSettingOverride && this.#setting.mouseHoverSetting;
-    const scene =
-      hoverScene?.apiSlug && hoverScene.apiSlug !== GLOBAL_KEY
-        ? hoverScene
-        : this.#rule;
+    const scene = hoverScene || this.#rule;
     const selectedApi = apiSettingOverride || this.#apiSetting;
     if (!selectedApi || selectedApi.isDisabled) {
       return Promise.reject(
@@ -4749,6 +4816,11 @@ overflow-wrap: anywhere !important;`;
       );
     }
     const rawApiSetting = { ...selectedApi };
+    if (!terminology) {
+      terminology = this.#prepareRequestTerminology(rawApiSetting);
+      if (terminology.then) terminology = await terminology;
+    }
+    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
 
     const apiSetting = resolveApiPromptSettings(
       withScenePrompt(rawApiSetting, scene),
@@ -4756,7 +4828,7 @@ overflow-wrap: anywhere !important;`;
       this.#setting.subtitleSetting
     );
 
-    const glossary = { ...this.#glossary };
+    const glossary = { ...terminology.resolved.glossary };
     const apisMap = this.#apisMap;
 
     const args = {
@@ -4767,6 +4839,11 @@ overflow-wrap: anywhere !important;`;
       glossary,
       onStreamChunk,
       textFormat: "html",
+      scene: this.#rule,
+      terminologyTables: terminology.tables,
+      normalTermsApplied,
+      onTerminologyWarning: (this.#terminologyWarning ||=
+        terminologyWarningHandler(this.#setting.uiLang)),
       translateVariants: this.#setting.translateVariants,
     };
 
@@ -4792,10 +4869,12 @@ overflow-wrap: anywhere !important;`;
     }
 
     // Hooks and request preparation may finish after this session was cancelled.
+    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
     return apiTranslate({ ...args, signal });
   }
 
   #cancelTranslationRequests() {
+    this.#requestTerminologySnapshots.clear();
     this.#runId++;
     this.#translationController.abort();
     this.#translationController = new AbortController();
@@ -4855,7 +4934,7 @@ overflow-wrap: anywhere !important;`;
       for (const child of node.children) {
         if (child.classList.contains(Translator.KISS_CLASS.warpper)) {
           wrappers.push(child);
-        } else if (!this.#shouldBreak(child)) {
+        } else if (!this.#shouldBreak(child, true)) {
           stack.push(child);
         }
       }
@@ -4887,12 +4966,7 @@ overflow-wrap: anywhere !important;`;
     }
 
     while (current) {
-      if (
-        this.#shouldBreak(current) &&
-        !Translator.TAGS.WARP.has(current.nodeName?.toUpperCase())
-      ) {
-        break;
-      }
+      if (this.#shouldBreak(current)) break;
 
       if (
         current.nodeType === Node.ELEMENT_NODE ||
@@ -5550,7 +5624,48 @@ overflow-wrap: anywhere !important;`;
 
   // 开启翻译
   enable() {
+    const sources = [
+      ...terminologySourceList(this.#rule),
+      this.#apiSetting || {},
+    ];
+    if (
+      !this.#terminologyReady &&
+      sources.some((source) => source.termsList?.length)
+    ) {
+      if (!this.#terminologyLoading) {
+        const runId = this.#runId;
+        const pending = loadTerminologySnapshot(sources)
+          .then((tables) => {
+            if (runId !== this.#runId) return;
+            this.#terminologyTables = tables;
+            this.#terminologyReady = true;
+            this.#parseTerms(this.#rule.terms);
+            const missing = compileTerminology(sources, tables).missingTableIds;
+            if (missing.length)
+              logger
+                .child("translator")
+                .warn("Terminology tables unavailable", missing);
+            if (this.#enabled) {
+              this.#terminologyWarning = terminologyWarningHandler(
+                this.#setting.uiLang
+              );
+              this.rescan();
+            } else this.enable();
+          })
+          .catch((error) =>
+            logger.child("translator").warn("Unable to load terminology", error)
+          )
+          .finally(() => {
+            if (this.#terminologyLoading === pending)
+              this.#terminologyLoading = null;
+          });
+        this.#terminologyLoading = pending;
+      }
+      return this.#terminologyLoading;
+    }
+
     if (this.#enabled || this.#editorPaused) return;
+    this.#terminologyWarning = terminologyWarningHandler(this.#setting.uiLang);
     this.#enabled = true;
     this.#rule.transOpen = "true";
     this.#cancelTranslationRequests();
@@ -5594,7 +5709,8 @@ overflow-wrap: anywhere !important;`;
         deLang,
         null,
         null,
-        signal
+        signal,
+        false
       );
       if (runId !== this.#runId || this.#editorPaused) return;
       this.#docInfo.title = document.title; // 缓存原标题
@@ -5606,8 +5722,13 @@ overflow-wrap: anywhere !important;`;
 
   // 关闭翻译
   disable() {
+    if (this.#terminologyLoading) {
+      this.#cancelTranslationRequests();
+      this.#terminologyLoading = null;
+    }
     if (!this.#enabled) return;
     this.#enabled = false;
+    this.#terminologyReady = false;
     this.#rule.transOpen = "false";
     this.#cancelTranslationRequests();
     // 关闭翻译时立即废弃语言检测中的按住任务
@@ -5641,7 +5762,7 @@ overflow-wrap: anywhere !important;`;
 
   // 切换是否翻译
   toggle() {
-    this.#enabled ? this.disable() : this.enable();
+    this.#enabled || this.#terminologyLoading ? this.disable() : this.enable();
   }
 
   toggleTransOnly() {
@@ -5749,12 +5870,33 @@ overflow-wrap: anywhere !important;`;
     this.#placeholderCache = null;
     this.#blockSelectorInvalid = false;
 
+    if (
+      !newRule.terminologySources &&
+      this.#rule.terminologySources &&
+      ["terms", "aiTerms", "termsList"].some((key) =>
+        Object.prototype.hasOwnProperty.call(newRule, key)
+      )
+    ) {
+      const patch = Object.fromEntries(
+        ["terms", "aiTerms", "termsList"]
+          .filter((key) => Object.prototype.hasOwnProperty.call(newRule, key))
+          .map((key) => [key, newRule[key]])
+      );
+      const [first = {}, ...rest] = this.#rule.terminologySources;
+      this.#rule.terminologySources = [{ ...first, ...patch }, ...rest];
+    }
+
     // terms 变更时重新解析术语：updateRule 可能由扩展/Popup 在运行期推送新规则，
     // 必须同步刷新 #termEntries 与 #combinedTermsRegex，否则术语停留在构造时的旧值
     // （历史缺陷：只有 #rule.terms 被覆盖，解析状态不更新导致新术语静默不生效）。
     // 用 hasOwnProperty 判定（与上方 3991 行一致）：显式传 terms: undefined 不触发重解析，
     // 避免把解析状态置位到 undefined 派生值。
-    if (Object.prototype.hasOwnProperty.call(newRule, "terms")) {
+    if (
+      ["terms", "termsList", "terminologySources", "apiSlug"].some((key) =>
+        Object.prototype.hasOwnProperty.call(newRule, key)
+      )
+    ) {
+      this.#terminologyReady = false;
       this.#parseTerms(this.#rule.terms);
     }
 
@@ -5763,6 +5905,22 @@ overflow-wrap: anywhere !important;`;
     // 导致 AI 翻译静默不生效。这里与 terms 分支并列，保持两者解析状态一致。
     if (Object.prototype.hasOwnProperty.call(newRule, "aiTerms")) {
       this.#glossary = parseAITerms(this.#rule.aiTerms);
+    }
+
+    const hasSelectedTables = [
+      ...terminologySourceList(this.#rule),
+      this.#apiSetting || {},
+    ].some((source) => source.termsList?.length);
+    if (
+      (this.#enabled || this.#terminologyLoading) &&
+      !this.#terminologyReady &&
+      (hasSelectedTables || this.#terminologyLoading)
+    ) {
+      this.#cancelTranslationRequests();
+      this.#terminologyLoading = null;
+      if (this.#enabled && !hasSelectedTables) this.rescan();
+      else this.enable();
+      return;
     }
 
     const needsTriggerRescan =

@@ -20,6 +20,9 @@ jest.mock("./detect", () => ({
   tryDetectLang: jest.fn(),
 }));
 jest.mock("@streamparser/json", () => ({ JSONParser: jest.fn() }));
+jest.mock("./terminologyStorage", () => ({
+  loadTerminologySnapshot: jest.fn(async () => []),
+}));
 jest.mock("./sync", () => ({ trySyncRules: jest.fn() }));
 jest.mock("./subRules", () => ({ loadOrFetchSubRules: jest.fn() }));
 
@@ -122,6 +125,147 @@ function createPlainTextTranslator(rule = {}, setting = {}) {
 }
 
 describe("Translator rule styles", () => {
+  describe("manual terminology snapshots", () => {
+    const table = {
+      id: "hover-topic",
+      name: "Topic",
+      description: "",
+      terms: "act,行动",
+      aiTerms: "component,表组件",
+      normalMatchMode: "auto",
+    };
+    const setup = (apiSlug = "bubble") => {
+      document.body.innerHTML =
+        '<main id="root"><p id="target">act component</p></main>';
+      const pageApi = createApiSetting("page");
+      const bubbleApi = {
+        ...createApiSetting("bubble"),
+        termsList: [table.id],
+        aiTerms: "component,接口组件",
+      };
+      return createTranslator(
+        {
+          transOpen: "false",
+          apiSlug: "page",
+          aiTerms: "component,规则组件",
+          ...(apiSlug === "*" && { termsList: [table.id] }),
+        },
+        {
+          preInit: true,
+          transApis: [pageApi, bubbleApi],
+          mouseHoverSetting: {
+            useMouseHover: true,
+            displayMode: "bubble",
+            apiSlug,
+            mouseHoverKey: [],
+            mouseHoverKey2: [],
+          },
+        }
+      );
+    };
+    test.each(["bubble", "*"])(
+      "loads tables with page translation disabled (%s)",
+      async (apiSlug) => {
+        const { loadTerminologySnapshot } = require("./terminologyStorage");
+        const {
+          compileTerminology,
+          terminologySourceList,
+          protectTerminologyText,
+        } = require("./terminology");
+        loadTerminologySnapshot.mockResolvedValue([table]);
+        apiTranslate.mockImplementation(async (args) => {
+          const resolved = compileTerminology(
+            [...terminologySourceList(args.scene), args.apiSetting],
+            args.terminologyTables
+          );
+          expect(resolved.glossary.component).toBe("规则组件");
+          const protection = protectTerminologyText(
+            args.text,
+            resolved.normalEntries
+          );
+          expect(protection.text).not.toContain("act");
+          expect(args.normalTermsApplied).toBe(false);
+          return { trText: protection.restore(protection.text) };
+        });
+        setup(apiSlug);
+        await hoverNode(document.getElementById("target"));
+        await flushAsync();
+        expect(apiTranslate).toHaveBeenCalledTimes(1);
+        expect(
+          document.querySelector(".kiss-translator-hover-bubble").textContent
+        ).toBe("行动 component");
+      }
+    );
+    test.each(["stop", "service"])(
+      "discards a pending hover snapshot after %s",
+      async (action) => {
+        const { loadTerminologySnapshot } = require("./terminologyStorage");
+        let resolve;
+        loadTerminologySnapshot.mockImplementationOnce(
+          () =>
+            new Promise((done) => {
+              resolve = done;
+            })
+        );
+        const translator = setup();
+        await hoverNode(document.getElementById("target"));
+        await flushAsync();
+        expect(resolve).toEqual(expect.any(Function));
+        if (action === "stop") translator.stop();
+        else translator.updateApiSettings([createApiSetting("page")]);
+        resolve([table]);
+        await flushAsync();
+        expect(apiTranslate).not.toHaveBeenCalled();
+      }
+    );
+  });
+  test.each(["toggle", "change-table"])(
+    "%s during table loading ignores the canceled snapshot",
+    async (action) => {
+      const { loadTerminologySnapshot } = require("./terminologyStorage");
+      let first, second;
+      loadTerminologySnapshot
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              first = resolve;
+            })
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              second = resolve;
+            })
+        );
+      document.body.innerHTML = '<main id="root"><p>act react</p></main>';
+      apiTranslate.mockImplementation(async ({ text }) => ({ trText: text }));
+      const translator = createTranslator({ termsList: ["topic"] });
+      await flushAsync();
+      if (action === "toggle") {
+        translator.disable();
+        translator.enable();
+      } else translator.updateRule({ termsList: ["other"] });
+      expect(loadTerminologySnapshot).toHaveBeenCalledTimes(2);
+      first([]);
+      await flushAsync();
+      expect(apiTranslate).not.toHaveBeenCalled();
+      second([
+        {
+          id: action === "toggle" ? "topic" : "other",
+          name: "Topic",
+          description: "",
+          terms: "act,行动",
+          aiTerms: "",
+          normalMatchMode: "auto",
+        },
+      ]);
+      await flushAsync();
+      expect(
+        document.querySelector(`.${Translator.KISS_CLASS.inner}`).textContent
+      ).toBe("行动 react");
+    }
+  );
+
   test.each(["disable", "stop", "rescan", "source", "target", "service"])(
     "cancels pending webpage requests on %s and isolates the next session",
     async (action) => {
@@ -2765,6 +2909,89 @@ describe("Translator rule styles", () => {
       window.PointerEvent = savedPointer;
     });
 
+    test.each([true, false])(
+      "touch uses its service snapshot and protects terms once (independent=%s)",
+      async (independent) => {
+        const { loadTerminologySnapshot } = require("./terminologyStorage");
+        const pageApi = { ...createApiSetting("page"), terms: "act,整页" };
+        const touchApi = {
+          ...createApiSetting("touch"),
+          termsList: ["touch-table"],
+        };
+        const table = {
+          id: "touch-table",
+          name: "Touch",
+          terms: "act,触摸",
+          aiTerms: "component,表组件",
+          normalMatchMode: "auto",
+        };
+        loadTerminologySnapshot.mockResolvedValue([table]);
+        const translator = createTranslator(
+          {
+            transOpen: "false",
+            apiSlug: "page",
+            aiTerms: "component,规则组件",
+            ...(!independent && { termsList: [table.id] }),
+          },
+          {
+            preInit: false,
+            transApis: [pageApi, touchApi],
+            mouseHoverSetting: { apiSlug: independent ? "touch" : "*" },
+          }
+        );
+        const node = document.getElementById("target");
+        node.textContent = "act component";
+        apiTranslate.mockImplementation(async (args) => {
+          expect(args.text).not.toContain("act");
+          expect(args.text).toContain("{1}");
+          expect(args.normalTermsApplied).toBe(true);
+          expect(args.glossary.component).toBe("规则组件");
+          return { trText: args.text, isSame: false };
+        });
+        translator.setTouchMode("tap");
+        tap(node);
+        await flushAsync();
+        await flushAsync();
+        expect(apiTranslate).toHaveBeenCalledTimes(1);
+        expect(
+          node.querySelector(`.${Translator.KISS_CLASS.inner}`).textContent
+        ).toBe("触摸 component");
+      }
+    );
+
+    test("concurrent touch tasks share a pending snapshot and can retry a failed load", async () => {
+      const { loadTerminologySnapshot } = require("./terminologyStorage");
+      let reject;
+      loadTerminologySnapshot.mockImplementationOnce(
+        () =>
+          new Promise((_resolve, fail) => {
+            reject = fail;
+          })
+      );
+      const translator = createTranslator(
+        { transOpen: "false", termsList: ["topic"] },
+        { preInit: false }
+      );
+      const first = document.getElementById("target");
+      const second = document.createElement("p");
+      second.textContent = "Second touch paragraph";
+      document.getElementById("root").append(second);
+      translator.setTouchMode("tap");
+      tap(first);
+      tap(second);
+      await flushAsync();
+      expect(loadTerminologySnapshot).toHaveBeenCalledTimes(1);
+      reject(new Error("storage unavailable"));
+      await flushAsync();
+      expect(apiTranslate).not.toHaveBeenCalled();
+      loadTerminologySnapshot.mockResolvedValue([]);
+      tap(first);
+      await flushAsync();
+      await flushAsync();
+      expect(loadTerminologySnapshot).toHaveBeenCalledTimes(2);
+      expect(first.textContent).toContain("Translated");
+    });
+
     test("keeps originals and inserts bilingual text below, then restores", async () => {
       const translator = createTranslator(
         {
@@ -3176,84 +3403,468 @@ describe("Translator rule styles", () => {
     expect(target.style.cssText).toContain("color: red");
   });
 
-  test("translates a paragraph beside an embedded script without requesting the script", async () => {
-    apiTranslate.mockImplementation(({ text }) =>
-      Promise.resolve({ trText: text, isSame: false })
-    );
-    const paragraph = "The readable paragraph stays in the request.";
-    document.body.innerHTML = `<main id="root"><div id="host">${paragraph}<script id="embed"></script></div></main>`;
-    const host = document.getElementById("host");
-    document.getElementById("embed").textContent =
-      `SML.load(["xxxxxz","xxxxxxxv1"], 'auto');`;
-
-    createTranslator({ scanAll: "true" });
-    await flushAsync();
-
-    const requested = apiTranslate.mock.calls
-      .map(([args]) => args.text)
-      .join("\n");
-    const wrapper = host.querySelector(`.${Translator.KISS_CLASS.warpper}`);
-    expect(requested).toContain(paragraph);
-    expect(requested).not.toContain("SML.load");
-    expect(wrapper).not.toBeNull();
-    expect(wrapper.textContent).toContain(paragraph);
-    expect(wrapper.textContent).not.toContain("SML.load");
-  });
-
-  test.each([
-    "Choose (A), (B), or (C); then continue.",
-    "Use [small], [medium], or [large]; choose one.",
-  ])(
-    "keeps punctuated prose %s in the request while excluding an embedded script",
-    async (sentence) => {
+  describe("paragraph auxiliary nodes", () => {
+    test("refreshes layout snapshots between preview scans", () => {
       document.body.innerHTML =
-        '<main id="root"><p id="prose"></p><div><script id="embed"></script></div></main>';
-      document.getElementById("prose").textContent = sentence;
-      document.getElementById("embed").textContent =
-        `SML.load(["xxxxxz","xxxxxxxv1"], 'auto');`;
+        '<main id="root"><div id="target">Outer <span id="nested" style="display:none"><div id="block">Nested block</div></span> after.</div></main>';
+      const translator = createTranslator(
+        { transOpen: "false" },
+        { preInit: false }
+      );
+      expect(translator.previewRule().targets.map((node) => node.id)).toEqual([
+        "target",
+      ]);
+      document.querySelector("#nested").style.display = "contents";
+      expect(translator.previewRule().targets.map((node) => node.id)).toEqual([
+        "target",
+        "block",
+      ]);
+      document.querySelector("#nested").style.display = "inline-flex";
+      expect(translator.previewRule().targets.map((node) => node.id)).toEqual([
+        "target",
+      ]);
+      translator.updateRule({
+        keepSelector: "#nested",
+        blockSelector: "[invalid",
+      });
+      expect(translator.previewRule().targets.map((node) => node.id)).toEqual([
+        "target",
+      ]);
+    });
 
-      createTranslator();
+    test("adopts and restores a group spanning ignored and hidden nodes", async () => {
+      document.body.innerHTML =
+        '<main id="root"><p id="target">Before<span class="excluded">SECRET</span><unknown-box hidden>Hidden</unknown-box><script>metadata</script>after.</p></main>';
+      const target = document.querySelector("#target");
+      const originals = [...target.childNodes];
+      target.insertAdjacentHTML(
+        "beforeend",
+        '<kiss-translator class="kiss-translator-wrapper notranslate"><font class="kiss-translator-inner">Existing translation</font></kiss-translator>'
+      );
+      const translator = createTranslator({ ignoreSelector: ".excluded" });
+      await flushAsync();
+      expect(apiTranslate).not.toHaveBeenCalled();
+      translator.updateRule({ transOnly: "true" });
+      await flushAsync();
+      translator.updateRule({ transOnly: "false" });
+      await flushAsync();
+      translator.disable();
+      expect([...target.childNodes]).toEqual(originals);
+      originals.forEach((node, index) =>
+        expect(target.childNodes[index]).toBe(node)
+      );
+    });
+
+    test("preserves existing whitespace around skipped inline content", async () => {
+      document.body.innerHTML =
+        '<main id="root"><div>Before<span class="excluded">SECRET</span> <b>after.</b></div></main>';
+      createTranslator({ ignoreSelector: ".excluded", hasRichText: "false" });
+      await flushAsync();
+      expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+        "Before after.",
+      ]);
+    });
+
+    test.each(["true", "false"])(
+      "skips ignored inline content without splitting: autoScan=%s",
+      async (autoScan) => {
+        document.body.innerHTML =
+          '<main id="root"><div id="target">Before<span class="excluded">SECRET<div>nested secret</div></span><button>SECRET button</button>after.</div></main>';
+        const translator = createTranslator({
+          autoScan,
+          selector: "#target",
+          ignoreSelector: ".excluded, button",
+          hasRichText: "false",
+        });
+        await flushAsync();
+        expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+          "Beforeafter.",
+        ]);
+        translator.disable();
+        expect(document.querySelector(".excluded div").textContent).toBe(
+          "nested secret"
+        );
+      }
+    );
+
+    test.each(["true", "false"])(
+      "keeps visible ignored blocks as boundaries: autoScan=%s",
+      async (autoScan) => {
+        document.body.innerHTML =
+          '<main id="root"><div id="target">Before<div class="excluded">SECRET</div>after.</div></main>';
+        createTranslator({
+          autoScan,
+          selector: "#target",
+          ignoreSelector: ".excluded",
+        });
+        await flushAsync();
+        expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+          "Before",
+          "after.",
+        ]);
+      }
+    );
+
+    test.each(["span", "unknown-widget"])(
+      "scans nested blocks through ordinary inline flow: %s",
+      async (tag) => {
+        document.body.innerHTML = `<main id="root"><div id="target">Outer before<${tag} style="display:inline">Inner before<div>Block source</div>Inner after</${tag}>Outer after</div></main>`;
+        createTranslator({ hasRichText: "false" });
+        await flushAsync();
+        expect(
+          apiTranslate.mock.calls.map(([args]) => args.text).sort()
+        ).toEqual(
+          [
+            "Block source",
+            "Inner after",
+            "Inner before",
+            "Outer after",
+            "Outer before",
+          ].sort()
+        );
+      }
+    );
+
+    test.each(["inline-block", "inline-flex", "inline-grid", "inline-table"])(
+      "keeps custom atomic inline layout together: %s",
+      async (display) => {
+        document.body.innerHTML = `<main id="root"><div>Before <custom-box style="display:${display}"><div>middle</div></custom-box> after.</div></main>`;
+        createTranslator({ hasRichText: "false" });
+        await flushAsync();
+        expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+          "Before middle after.",
+        ]);
+      }
+    );
+
+    test.each(
+      [false, true].flatMap((transOnly) =>
+        [false, true].map((wrapOriginal) => ({
+          transOnly: String(transOnly),
+          wrapOriginal: String(wrapOriginal),
+        }))
+      )
+    )("restores skipped and kept source nodes in order: %j", async (rule) => {
+      document.body.innerHTML =
+        '<style>.css-hidden { display:none }</style><main id="root"><p id="target">Before <span class="excluded">SECRET ignored</span><unknown-box hidden>SECRET hidden</unknown-box><code>kept<span class="css-hidden">SECRET nested</span></code><script>SECRET script</script> after.</p></main>';
+      const target = document.querySelector("#target");
+      const originals = [...target.childNodes];
+      const translator = createTranslator({
+        ...rule,
+        ignoreSelector: ".excluded",
+        keepSelector: "code, script, unknown-box",
+      });
+      await flushAsync();
+      expect(apiTranslate).toHaveBeenCalledTimes(1);
+      expect(apiTranslate.mock.calls[0][0].text).not.toMatch(/SECRET|kept/);
+      expect(
+        target.querySelector(`.${Translator.KISS_CLASS.inner} .excluded`)
+      ).toBeNull();
+      translator.updateRule({ transOnly: "true" });
+      await flushAsync();
+      translator.updateRule({ transOnly: "false" });
+      await flushAsync();
+      translator.disable();
+      expect([...target.childNodes]).toEqual(originals);
+      originals.forEach((node, index) =>
+        expect(target.childNodes[index]).toBe(node)
+      );
+    });
+
+    test.each([
+      '<link rel="mw:PageProp/Category" href="./Category:Example">',
+      '<meta name="example" content="secret">',
+      '<div style="display:none">secret</div>',
+      '<unknown-widget style="display:none">secret</unknown-widget>',
+      '<span class="css-hidden">secret</span>',
+      "<unknown-widget hidden>secret</unknown-widget>",
+    ])("continues across elements without a layout box: %s", async (html) => {
+      document.body.innerHTML =
+        '<style>.css-hidden { display:none }</style><main id="root"><div id="target">Before ' +
+        html +
+        "after.</div></main>";
+      const source = document.querySelector("#target");
+      const auxiliary = source.firstElementChild;
+      const translator = createTranslator();
+      await flushAsync();
+      expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+        "Before after.",
+      ]);
+      translator.disable();
+      expect(source.firstElementChild).toBe(auxiliary);
+    });
+
+    test.each([
+      ['<div style="display:inline">middle</div>', false],
+      ['<span style="display:block">middle</span>', true],
+      ['<a style="display:block">middle</a>', true],
+      ['<b style="display:inline-block">middle</b>', false],
+      ['<span style="display:inline-flex">middle</span>', false],
+      ['<span style="display:inline-grid">middle</span>', false],
+      ['<div style="display:contents">middle</div>', false],
+      ['<span style="display:contents"><div>middle</div></span>', true],
+    ])(
+      "uses rendered layout for paragraph boundaries: %s",
+      async (html, block) => {
+        document.body.innerHTML =
+          '<main id="root"><div id="target">Before ' +
+          html +
+          " after.</div></main>";
+        expect(
+          Translator.isBlockNode(
+            document.querySelector("#target").firstElementChild
+          )
+        ).toBe(block);
+        createTranslator({ hasRichText: "false" });
+        await flushAsync();
+        const texts = apiTranslate.mock.calls.map(([args]) => args.text);
+        if (block) {
+          expect(texts).toHaveLength(3);
+        } else {
+          expect(texts).toEqual(["Before middle after."]);
+        }
+      }
+    );
+
+    test("rechecks formula display after a temporary rendering state", async () => {
+      document.body.innerHTML =
+        '<main id="root"><p>Before the formula <span class="MathJax" style="display:none">x+y</span> and after it.</p></main>';
+      const formula = document.querySelector(".MathJax");
+      expect(Translator.isBlockNode(formula)).toBe(false);
+      formula.style.display = "inline";
+      expect(Translator.isBlockNode(formula)).toBe(false);
+      createTranslator({ keepSelector: ".MathJax" });
+      await flushMutations();
+      expect(apiTranslate).toHaveBeenCalledTimes(1);
+      expect(apiTranslate.mock.calls[0][0].text).toMatch(
+        /^Before the formula .+ and after it\.$/
+      );
+    });
+
+    test.each(["true", "false"])(
+      "scan and preview keep formula internals atomic: autoScan=%s",
+      async (autoScan) => {
+        document.body.innerHTML =
+          '<main id="root"><p id="target">Before the formula <span class="MathJax" style="display:inline"><span id="internal" style="display:block">x+y</span></span> and after it.</p></main>';
+        const translator = createTranslator({
+          autoScan,
+          selector: "p, #internal",
+          keepSelector: ".MathJax",
+        });
+        await flushMutations();
+        expect(apiTranslate).toHaveBeenCalledTimes(1);
+        expect(translator.previewRule().targets).toEqual([
+          document.getElementById("target"),
+        ]);
+        expect(
+          translator.previewRule({
+            ...Translator.DEFAULT_RULE,
+            rootsSelector: "#internal",
+            autoScan,
+            selector: "#internal",
+            keepSelector: ".MathJax",
+          }).targets
+        ).toEqual([]);
+        expect(document.querySelector(".MathJax kiss-translator")).toBeNull();
+      }
+    );
+
+    test.each(
+      ["true", "false"].flatMap((autoScan) =>
+        ["insert", "remove", "text", "replace", "stale-translation"].map(
+          (change) => [autoScan, change]
+        )
+      )
+    )(
+      "updates the owning paragraph after formula changes: autoScan=%s change=%s",
+      async (autoScan, change) => {
+        apiTranslate.mockImplementation(async ({ text }) => ({
+          trText: text,
+          isSame: false,
+        }));
+        document.body.innerHTML =
+          '<main id="root"><p id="target">Before the formula <span class="MathJax" style="display:inline"><span class="math" style="display:inline-block"><span id="internal" style="display:block"><span id="value">x+y</span></span></span></span> and after it.</p><p id="sibling">An independent neighboring paragraph.</p></main>';
+        const translator = createTranslator({
+          autoScan,
+          selector: "p, #internal",
+          keepSelector: ".MathJax, .math",
+        });
+        await flushMutations();
+        expect(apiTranslate).toHaveBeenCalledTimes(2);
+        const target = document.getElementById("target");
+        const siblingWrapper = document.querySelector(
+          "#sibling kiss-translator"
+        );
+        const originalFormula = target.querySelector(".MathJax");
+        const internal = originalFormula.querySelector("#internal");
+        const value = internal.querySelector("#value");
+        apiTranslate.mockClear();
+        if (change === "insert") {
+          value.appendChild(document.createTextNode("+z"));
+        } else if (change === "remove") {
+          value.remove();
+        } else if (change === "text") {
+          value.firstChild.nodeValue = "a+b";
+        } else if (change === "replace") {
+          const replacement = originalFormula.cloneNode(true);
+          replacement.querySelector("#value").textContent = "a+b";
+          originalFormula.replaceWith(replacement);
+        } else {
+          internal.insertAdjacentHTML(
+            "beforeend",
+            '<kiss-translator class="kiss-translator-wrapper notranslate">Stale formula translation</kiss-translator>'
+          );
+          value.firstChild.nodeValue = "a+b";
+        }
+        await flushMutations();
+        expect(apiTranslate).toHaveBeenCalledTimes(1);
+        expect(apiTranslate.mock.calls[0][0].text).toMatch(
+          /^Before the formula .+ and after it\.$/
+        );
+        expect(
+          target.querySelectorAll(":scope > kiss-translator")
+        ).toHaveLength(1);
+        expect(target.querySelector(".MathJax kiss-translator")).toBeNull();
+        expect(document.querySelector("#sibling kiss-translator")).toBe(
+          siblingWrapper
+        );
+        const translatedFormula = target.querySelector(
+          "kiss-translator .MathJax"
+        );
+        expect(translatedFormula.textContent).toBe(
+          target.querySelector(".MathJax").textContent
+        );
+        await flushMutations();
+        expect(apiTranslate).toHaveBeenCalledTimes(1);
+        const formula = target.querySelector(".MathJax");
+        translator.updateRule({ transOnly: "true" });
+        await flushMutations();
+        expect(target.contains(formula)).toBe(false);
+        translator.updateRule({ transOnly: "false" });
+        await flushMutations();
+        expect(target.querySelector(".MathJax")).toBe(formula);
+        translator.disable();
+        expect(target.querySelector(".MathJax")).toBe(formula);
+        expect(target.querySelector("kiss-translator")).toBeNull();
+      }
+    );
+
+    test.each([
+      {},
+      { autoScan: "false", selector: "p" },
+      { scanAll: "true" },
+      { isPlainText: true },
+    ])("continues the paragraph across auxiliary nodes: %j", async (rule) => {
+      document.body.innerHTML =
+        '<main id="root"><p>Before the auxiliary nodes <script>secret script!</script><style>/* secret style. */</style><template>secret template</template><span style="display:none">secret preview?</span>and after them.</p></main>';
+      createTranslator({ ...rule, splitParagraph: "split_punctuation" });
       await flushAsync();
 
-      expect(apiTranslate).toHaveBeenCalledTimes(1);
-      const requested = apiTranslate.mock.calls[0][0].text;
-      expect(requested).toBe(sentence);
-      expect(requested).not.toContain("SML.load");
-    }
-  );
-
-  test("does not target a script element when the manual selector includes script", async () => {
-    document.body.innerHTML =
-      '<main id="root"><p id="prose">A stable paragraph remains translatable.</p><script id="embed"></script></main>';
-    document.getElementById("embed").textContent =
-      `SML.load(["xxxxxz"], 'auto');`;
-    const translator = createTranslator({
-      autoScan: "false",
-      selector: "p, script",
+      expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+        "Before the auxiliary nodes and after them.",
+      ]);
     });
-    await flushAsync();
 
-    expect(translator.previewRule().targets.map((node) => node.id)).toEqual([
-      "prose",
-    ]);
-    expect(apiTranslate).toHaveBeenCalledTimes(1);
-    expect(apiTranslate.mock.calls[0][0].text).not.toContain("SML.load");
-    expect(
-      document.querySelector(`script .${Translator.KISS_CLASS.warpper}`)
-    ).toBeNull();
-  });
+    test.each([
+      ["<br>", {}],
+      ["<div></div>", {}],
+      ["<span data-kiss-ui>plugin content</span>", {}],
+      [
+        '<span class="excluded" style="display:block">excluded text</span>',
+        { ignoreSelector: ".excluded" },
+      ],
+      [
+        '<span class="block" style="display:none">hidden block</span>',
+        { blockSelector: ".block" },
+      ],
+    ])("keeps the boundary at %s", async (boundary, rule) => {
+      document.body.innerHTML =
+        '<main id="root"><div id="target">Before the boundary ' +
+        boundary +
+        "after the boundary.</div></main>";
+      createTranslator({
+        autoScan: "false",
+        selector: "#target, #target > div",
+        ...rule,
+      });
+      await flushAsync();
 
-  test("does not throw or insert a wrapper for an empty or whitespace-only script", async () => {
-    document.body.innerHTML =
-      '<main id="root"><script id="empty"></script><div><script id="blank">   \n\t </script></div></main>';
+      expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+        "Before the boundary",
+        "after the boundary.",
+      ]);
+    });
 
-    expect(() => createTranslator()).not.toThrow();
-    await flushAsync();
+    test("preserves metadata inside a plain-text pre without flattening it", async () => {
+      document.body.innerHTML =
+        '<main id="root"><pre>Before the metadata <script>secret source</script>and after it.</pre></main>';
+      const script = document.querySelector("pre script");
+      createPlainTextTranslator();
+      await flushAsync();
 
-    expect(apiTranslate).not.toHaveBeenCalled();
-    expect(
-      document.querySelector(`.${Translator.KISS_CLASS.warpper}`)
-    ).toBeNull();
+      expect(apiTranslate.mock.calls.map(([args]) => args.text)).toEqual([
+        "Before the metadata and after it.",
+      ]);
+      expect(document.querySelector("pre script")).toBe(script);
+    });
+
+    test.each([false, true])(
+      "restores original node order across translation-only mode (adopted: %s)",
+      async (adopted) => {
+        document.body.innerHTML =
+          '<main id="root"><p id="target">Before the auxiliary nodes <span style="display:none">secret preview</span><script>secret source</script>and after them.</p></main>';
+        const target = document.getElementById("target");
+        const originals = [...target.childNodes];
+        if (adopted) {
+          target.insertAdjacentHTML(
+            "beforeend",
+            '<kiss-translator class="kiss-translator-wrapper notranslate"><font class="kiss-translator-inner">Existing translation</font></kiss-translator>'
+          );
+        }
+        const translator = createTranslator();
+        await flushAsync();
+        expect(apiTranslate).toHaveBeenCalledTimes(adopted ? 0 : 1);
+
+        translator.updateRule({ transOnly: "true" });
+        await flushAsync();
+        expect(originals.every((node) => !target.contains(node))).toBe(true);
+        translator.updateRule({ transOnly: "false" });
+        await flushAsync();
+        translator.disable();
+        expect(target.childNodes).toHaveLength(originals.length);
+        originals.forEach((node, index) => {
+          expect(target.childNodes[index]).toBe(node);
+        });
+      }
+    );
+
+    test("does not translate when the manual selector hits a script directly", async () => {
+      // 手动选择器直接命中 script：script 属非内容节点，不得发起请求，
+      // 也不得插入译文包装器。
+      document.body.innerHTML =
+        '<main id="root"><p>Outside content.</p><script>secret source();</script></main>';
+      createTranslator({ autoScan: "false", selector: "script" });
+      await flushAsync();
+
+      expect(apiTranslate).not.toHaveBeenCalled();
+      expect(
+        document.querySelector(`.${Translator.KISS_CLASS.warpper}`)
+      ).toBeNull();
+    });
+
+    test("tolerates blank scripts matched by the manual selector", async () => {
+      // 空白 script 命中选择器：不得抛错（用例跑通即证）、不得发请求、
+      // 不得插入包装器。
+      document.body.innerHTML =
+        '<main id="root"><p>Outside content.</p><script></script><script>   </script></main>';
+      createTranslator({ autoScan: "false", selector: "script" });
+      await flushAsync();
+
+      expect(apiTranslate).not.toHaveBeenCalled();
+      expect(
+        document.querySelector(`.${Translator.KISS_CLASS.warpper}`)
+      ).toBeNull();
+    });
   });
 
   test("skips whitespace-only groups around block children in selected list items", async () => {
@@ -7172,6 +7783,9 @@ describe("Translator rule styles", () => {
       '<main id="root"><p id="target">Paragraph text <a id="link" href="#">link text</a> tail</p></main>';
     const target = document.getElementById("target");
     const link = document.getElementById("link");
+    // Supply the actual hit target instead of relying on empty computed styles
+    // in jsdom to classify a normal inline link as a block.
+    document.elementFromPoint = () => link;
 
     createTranslator(
       { transOpen: "false" },
@@ -7216,6 +7830,7 @@ describe("Translator rule styles", () => {
     releaseRight();
 
     // 再翻译段落
+    document.elementFromPoint = () => target;
     await hoverNode(target, 20, 20);
     pressRightOn(target);
     jest.advanceTimersByTime(300);
@@ -9690,6 +10305,47 @@ describe("Translator rule styles", () => {
       );
       const inner = document.querySelector(`.${Translator.KISS_CLASS.inner}`);
       expect(inner.textContent).toBe("智能体集合 and GPT");
+    });
+
+    test("a failed group keeps its retry node in its own wrapper and does not clear a sibling group's translation", async () => {
+      let rejectFirst;
+      apiTranslate.mockImplementation(({ text }) => {
+        if (text.includes("First")) {
+          return new Promise((_, reject) => {
+            rejectFirst = reject;
+          });
+        }
+        return Promise.resolve({ trText: `translated ${text}`, isSame: false });
+      });
+      document.body.innerHTML =
+        '<main id="root"><div id="target">First paragraph text<br><br>Second paragraph text</div></main>';
+
+      createTranslator(
+        { autoScan: "false", selector: "#target" },
+        { minLength: 0 }
+      );
+      await flushAsync();
+
+      const wrappers = document.querySelectorAll(
+        `#target > .${Translator.KISS_CLASS.warpper}`
+      );
+      expect(wrappers).toHaveLength(2);
+      expect(wrappers[1].textContent).toContain("translated Second");
+
+      // the earlier group fails only after the later group has succeeded
+      rejectFirst(new Error("429 Too Many Requests"));
+      await flushAsync();
+
+      const after = document.querySelectorAll(
+        `#target > .${Translator.KISS_CLASS.warpper}`
+      );
+      expect(after[1].textContent).toContain("translated Second");
+      expect(
+        after[1].querySelector(`.${Translator.KISS_CLASS.retry}`)
+      ).toBeNull();
+      expect(
+        after[0].querySelector(`.${Translator.KISS_CLASS.retry}`)
+      ).not.toBeNull();
     });
 
     test("占位符序号跨运行隔离：每次请求都从 1 开始编号", async () => {

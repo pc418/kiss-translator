@@ -121,16 +121,23 @@ button.kt-options-nav__link { width: 100%; border: none; background: transparent
 .kt-options-page .MuiTextField-root { min-width: 0; }
 .kt-options-page .MuiInputLabel-root.MuiInputLabel-shrink { max-width: calc(125% - 24px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kt-options-page .kt-translation-text-field .MuiInputBase-root { min-height: 128px; align-items: flex-start; overflow: visible; padding: 0; border-radius: 16px; }
-.kt-options-page .kt-translation-text-field .MuiInputBase-inputMultiline { box-sizing: border-box; padding: 30px 58px 54px 16px; border: 0; outline: 0; background: transparent; line-height: 1.55; }
+.kt-options-page .kt-translation-text-field .MuiInputBase-inputMultiline { box-sizing: border-box; padding: 30px 66px 62px 16px; border: 0; outline: 0; background: transparent; line-height: 1.55; }
 .kt-options-page .kt-translation-text-field .MuiInputBase-inputMultiline:not([aria-hidden="true"]) { min-height: 128px; }
 .kt-options-page .kt-translation-text-field .MuiInputLabel-root { transform: translate(16px, 16px) scale(1); }
 .kt-options-page .kt-translation-text-field .MuiInputLabel-root.MuiInputLabel-shrink { transform: translate(16px, 7px) scale(.75); }
-.kt-options-page .kt-translation-text-field__actions { position: absolute; right: 16px; bottom: 16px; z-index: 1; }
+.kt-options-page .kt-translation-text-field__actions { position: absolute; right: 24px; bottom: 24px; z-index: 1; }
 .kt-options-page .kt-translation-text-field__actions .MuiIconButton-root { width: 34px; height: 34px; background: var(--kt-secc); color: var(--kt-onsecc); }
 @media (hover: hover) {
   .kt-options-page .kt-translation-text-field__actions .MuiIconButton-root:hover { background: var(--kt-secc); background: color-mix(in srgb, var(--kt-onsecc) 8%, var(--kt-secc)); }
 }
-.kt-options-page .kt-translation-text-field__actions .MuiIconButton-root.Mui-focusVisible { background: var(--kt-secc); background: color-mix(in srgb, var(--kt-onsecc) 10%, var(--kt-secc)); }
+.kt-options-page .kt-translation-text-field__actions .MuiIconButton-root.Mui-focusVisible { background: var(--kt-secc); background: color-mix(in srgb, var(--kt-onsecc) 10%, var(--kt-secc)); outline: none; box-shadow: inset 0 0 0 3px var(--kt-pri); }
+/* forced-colors 域 UA 忽略上方 inset box-shadow，而 outline:none 仍生效
+   → 该域键盘焦点零指示。换系统色描边（不写颜色，outline-color 由强制
+   引擎接管）；offset -3px 内收，不出 34px 按钮圆外。必须排在其后：同特
+   异性靠源码顺序压过 outline:none。上方环若改回描边，本块须一并删除。 */
+@media (forced-colors: active) {
+  .kt-options-page .kt-translation-text-field__actions .MuiIconButton-root.Mui-focusVisible { outline: 3px solid; outline-offset: -3px; }
+}
 .kt-options-page .kt-translation-text-field__actions .MuiIconButton-root.Mui-disabled { background: var(--kt-sf2); color: var(--kt-line); }
 .kt-options-page .kt-translation-text-field--source textarea { caret-color: var(--kt-pri); }
 .kt-options-page .kt-translation-text-field--result textarea { cursor: default; }
@@ -173,7 +180,9 @@ button.kt-options-nav__link { width: 100%; border: none; background: transparent
 .kt-playground-config__copy { min-width: 0; }
 .kt-playground-config__copy h2 { margin: 0; color: var(--kt-on); font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
 .kt-playground-config__copy p { margin: 4px 0 0; color: var(--kt-onv); font-size: var(--kt-settings-helper-font-size); line-height: 1.45; }
-.kt-playground-config__normalize { width: fit-content; flex: none; }
+.kt-playground-config__actions { max-width: 100%; flex: 0 0 auto; }
+.kt-playground-config__actions .kt-playground-config__normalize { width: fit-content; min-width: 0; flex: 0 1 auto; margin-right: 0; }
+.kt-playground-config__actions .MuiIconButton-root { flex: none; }
 .kt-playground-config__grid.MuiGrid-container { width: 100%; display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin: 0; }
 .kt-playground-config__grid.MuiGrid-container > .MuiGrid-item { width: auto; max-width: none; flex-basis: auto; padding: 0 !important; }
 .kt-playground-config__grid .MuiSelect-select { text-overflow: ellipsis; }
@@ -208,7 +217,7 @@ button.kt-options-nav__link { width: 100%; border: none; background: transparent
 .kt-settings-select--full { width: 100%; min-width: 0; max-width: none; }
 .kt-settings-select .MuiFilledInput-root { border-radius: 12px; }
 .kt-settings-select:not(.kt-settings-select--with-label) .MuiFilledInput-root { min-height: 44px; }
-.kt-settings-select .MuiSelect-select { color: var(--kt-on); font-size: var(--kt-settings-font-size); font-weight: 600; text-overflow: ellipsis; }
+.kt-settings-select .MuiSelect-select { color: var(--kt-on); font-size: var(--kt-settings-font-size); text-overflow: ellipsis; }
 .kt-settings-select:not(.kt-settings-select--with-label) .MuiSelect-select { padding: 11px 34px 11px 14px; }
 .kt-settings-segmented { width: 100%; min-width: 0; max-width: 100%; min-height: 44px; gap: 2px; overflow: hidden; padding: 3px; border: 1px solid color-mix(in srgb, var(--kt-linev) 72%, transparent); border-radius: 999px; background: var(--kt-sf2); box-shadow: inset 0 1px 2px rgba(0, 0, 0, .04); }
 .kt-settings-segmented > button { min-width: 0; min-height: 36px; flex: 1 1 auto; overflow: hidden; padding: 6px 10px; border: 0 !important; border-radius: 999px !important; color: var(--kt-onv); font-size: var(--kt-settings-font-size); line-height: 20px; text-transform: none; transition: background-color .2s ease, color .2s ease, box-shadow .2s ease; white-space: normal; }

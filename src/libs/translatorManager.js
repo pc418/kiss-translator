@@ -130,6 +130,11 @@ export default class TranslatorManager {
     transboxOnly = false,
   }) {
     this.#setting = this.#cloneConfig(setting);
+    const touchMode = setting?.mouseHoverSetting?.touchMode;
+    this.#touchMode =
+      supportsTouch() && ["tap", "swipe"].includes(touchMode)
+        ? touchMode
+        : "off";
     this.#rule = this.#cloneConfig(rule);
     this.#fabConfig = this.#cloneConfig(fabConfig);
     this.#favWords = this.#cloneConfig(favWords);
@@ -268,9 +273,10 @@ export default class TranslatorManager {
    */
   #createRuntimeModules() {
     if (this.#transboxOnly) {
-      this._transboxManager = new TransboxManager(
-        this.#cloneConfig(this.#setting)
-      );
+      this._transboxManager = new TransboxManager({
+        ...this.#cloneConfig(this.#setting),
+        rule: this.#cloneConfig(this.#rule),
+      });
       return;
     }
 
@@ -284,9 +290,10 @@ export default class TranslatorManager {
 
     this.#touchMode = this._translator.setTouchMode?.(this.#touchMode) || "off";
 
-    this._transboxManager = new TransboxManager(
-      this.#cloneConfig(this.#setting)
-    );
+    this._transboxManager = new TransboxManager({
+      ...this.#cloneConfig(this.#setting),
+      rule: this.#cloneConfig(this.#rule),
+    });
 
     // Frames keep page, selection, and hover translation, but no top-level UI.
     if (!this.#isIframe) {
@@ -999,6 +1006,9 @@ export default class TranslatorManager {
         ["off", "tap", "swipe"].includes(args?.mode)
       ) {
         this.#touchMode = this._translator?.setTouchMode(args.mode) || "off";
+        // Saved modes also start in child frames, which have no status bar.
+        // Relay off even for extension commands so their controls can stop them.
+        if (args.mode === "off") sendIframeMsg(action, args);
       }
       const touchTranslate = this.#getTouchState();
       this.#notifyTouchState();
@@ -1083,7 +1093,9 @@ export default class TranslatorManager {
         break;
       case MSG_TRANS_PUTRULE:
         this._translator?.updateRule(args);
+        this.#rule = this.#cloneConfig(this._translator.rule);
         this._imageTranslateManager?.updateRule(args);
+        this._transboxManager?.update({ rule: this.#cloneConfig(this.#rule) });
         break;
       case MSG_OPEN_TRANBOX:
         document.dispatchEvent(

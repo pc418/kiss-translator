@@ -39,6 +39,13 @@ export function getStreamDelta(json, apiType) {
     case OPT_TRANS_EPHONEAI:
     case OPT_TRANS_APIMART:
       // OpenAI 兼容协议的大模型 delta 提取逻辑
+      if (json.error) {
+        const error = new Error(
+          json.error.message || "OpenAI-compatible stream failed"
+        );
+        error.isAIStreamTerminal = true;
+        throw error;
+      }
       return json.choices?.[0]?.delta?.content || "";
     case OPT_TRANS_GEMINI: {
       // 两套 Gemini 协议共用同一接口类型：Interactions 带事件类型，generateContent 返回 candidates。
@@ -77,6 +84,12 @@ export function getStreamDelta(json, apiType) {
     }
     case OPT_TRANS_CLAUDE:
       // Anthropic Claude 格式 delta 提取逻辑
+      if (json.type === "error") {
+        // 流中途的 error 事件（如 overloaded_error）必须终止，交由上层回退到非流式
+        const error = new Error(json.error?.message || "Claude stream failed");
+        error.isAIStreamTerminal = true;
+        throw error;
+      }
       if (json.type === "content_block_delta") {
         return json.delta?.text || "";
       }

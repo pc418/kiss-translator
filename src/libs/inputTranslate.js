@@ -1,3 +1,4 @@
+import { terminologyWarningHandler } from "./terminologyWarning";
 import {
   DEFAULT_INPUT_RULE,
   DEFAULT_INPUT_SHORTCUT,
@@ -628,9 +629,13 @@ export class InputTranslator {
         fromLang,
         toLang,
         apiSetting,
+        scene: this.#config.inputRule,
+        onTerminologyWarning: terminologyWarningHandler(this.#config.uiLang),
         textFormat: "text",
         translateVariants: this.#config.translateVariants,
       });
+      if (getDeepActiveElement() !== node) return;
+
       const { trText, isSame } = result || {};
 
       // 输入框写回纯文本，开启后将模型输出的行内 LaTeX 转成可读的 Unicode
