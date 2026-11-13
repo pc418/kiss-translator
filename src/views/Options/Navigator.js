@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import ApiRoundedIcon from "@mui/icons-material/ApiRounded";
 import BookmarksRoundedIcon from "@mui/icons-material/BookmarksRounded";
 import BugReportRoundedIcon from "@mui/icons-material/BugReportRounded";
@@ -23,19 +23,36 @@ import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import Logo from "../../components/Logo";
 import { useI18n } from "../../hooks/I18n";
 import { useSetting } from "../../hooks/Setting";
-import { getSettingsSearchEntries, searchSettingsGroups } from "./search";
+import {
+  getSettingsSearchEntries,
+  getSettingsSearchHighlightParts,
+  getSettingsSearchTerms,
+  normalizeSearchText,
+  searchSettingsGroups,
+} from "./search";
 import { isExt, isAutoTranslateClipboardSupported } from "../../libs/client";
+
+function SearchHighlight({ text, terms, uiLang }) {
+  return getSettingsSearchHighlightParts(text, terms, uiLang).map(
+    (part, index) =>
+      part.matched ? <mark key={index}>{part.text}</mark> : part.text
+  );
+}
 
 export default function Navigator({ open, isMobile = false, onClose }) {
   const i18n = useI18n();
   const {
     setting: { uiLang },
   } = useSetting();
+  const [inputValue, setInputValue] = useState("");
   const [query, setQuery] = useState("");
+  // IME pre-edit text must not change results or highlights before it commits.
+  const composing = useRef(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const searching = Boolean(query.trim());
   const clearSearch = () => {
+    composing.current = false;
+    setInputValue("");
     setQuery("");
     const params = new URLSearchParams(location.search);
     if (params.has("setting")) {
@@ -193,57 +210,12 @@ export default function Navigator({ open, isMobile = false, onClose }) {
     [i18n, uiLang]
   );
 
-  const visibleGroups = searchSettingsGroups(groups, query, uiLang);
-
-  return (
-    <aside
-      id="kt-options-navigation"
-      className={`kt-options-sidebar ${open ? "kt-options-sidebar--open" : ""}`}
-      role={isMobile ? "dialog" : undefined}
-      aria-modal={isMobile ? "true" : undefined}
-      aria-labelledby={isMobile ? "kt-options-navigation-title" : undefined}
-      tabIndex={isMobile ? -1 : undefined}
-    >
-      <a
-        className="kt-options-brand"
-        href={process.env.REACT_APP_SITEURL}
-        target="_blank"
-        rel="noreferrer"
-      >
-        <Logo size={30} />
-        <span>
-          <span
-            id="kt-options-navigation-title"
-            className="kt-options-brand__name"
-          >
-            {i18n("app_name")}
-          </span>
-          <span className="kt-options-brand__version">
-            v{process.env.REACT_APP_VERSION}
-          </span>
-        </span>
-      </a>
-      <div className="kt-options-search">
-        <SearchRoundedIcon />
-        <input
-          type="search"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          placeholder={i18n("options_search")}
-          aria-label={i18n("options_search")}
-        />
-        {query.length > 0 && (
-          <button
-            type="button"
-            className="kt-options-search__clear"
-            aria-label={i18n("options_clear_search")}
-            title={i18n("options_clear_search")}
-            onClick={clearSearch}
-          >
-            <CloseRoundedIcon />
-          </button>
-        )}
-      </div>
+  // Draft IME input should only rerender the input, not the search results.
+  const navigation = useMemo(() => {
+    const searching = Boolean(query.trim());
+    const visibleGroups = searchSettingsGroups(groups, query, uiLang);
+    const searchTerms = getSettingsSearchTerms(query, uiLang);
+    return (
       <nav className="kt-options-nav">
         {visibleGroups.length ? (
           visibleGroups.map((group) => (
@@ -290,6 +262,24 @@ export default function Navigator({ open, isMobile = false, onClose }) {
                     <ul className="kt-options-nav__settings" aria-label={label}>
                       {matches.map((entry) => {
                         const search = `?setting=${encodeURIComponent(entry.key)}`;
+                        const labelText = normalizeSearchText(
+                          entry.label,
+                          uiLang
+                        );
+                        const details = [
+                          ...new Set(
+                            searchTerms
+                              .filter((term) => !labelText.includes(term))
+                              .map((term) =>
+                                entry.searchTexts.find((text) =>
+                                  normalizeSearchText(text, uiLang).includes(
+                                    term
+                                  )
+                                )
+                              )
+                              .filter(Boolean)
+                          ),
+                        ];
                         return (
                           <li key={entry.key}>
                             <Link
@@ -303,7 +293,23 @@ export default function Navigator({ open, isMobile = false, onClose }) {
                               }
                               onClick={isMobile ? onClose : undefined}
                             >
-                              {entry.label}
+                              <SearchHighlight
+                                text={entry.label}
+                                terms={searchTerms}
+                                uiLang={uiLang}
+                              />
+                              {details.map((text) => (
+                                <span
+                                  className="kt-options-nav__match-detail"
+                                  key={text}
+                                >
+                                  <SearchHighlight
+                                    text={text}
+                                    terms={searchTerms}
+                                    uiLang={uiLang}
+                                  />
+                                </span>
+                              ))}
                             </Link>
                           </li>
                         );
@@ -320,6 +326,82 @@ export default function Navigator({ open, isMobile = false, onClose }) {
           </div>
         )}
       </nav>
+    );
+  }, [
+    groups,
+    query,
+    uiLang,
+    i18n,
+    isMobile,
+    onClose,
+    location.pathname,
+    location.search,
+  ]);
+
+  return (
+    <aside
+      id="kt-options-navigation"
+      className={`kt-options-sidebar ${open ? "kt-options-sidebar--open" : ""}`}
+      role={isMobile ? "dialog" : undefined}
+      aria-modal={isMobile ? "true" : undefined}
+      aria-labelledby={isMobile ? "kt-options-navigation-title" : undefined}
+      tabIndex={isMobile ? -1 : undefined}
+    >
+      <a
+        className="kt-options-brand"
+        href={process.env.REACT_APP_SITEURL}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <Logo size={30} />
+        <span>
+          <span
+            id="kt-options-navigation-title"
+            className="kt-options-brand__name"
+          >
+            {i18n("app_name")}
+          </span>
+          <span className="kt-options-brand__version">
+            v{process.env.REACT_APP_VERSION}
+          </span>
+        </span>
+      </a>
+      <div className="kt-options-search">
+        <SearchRoundedIcon />
+        <input
+          type="search"
+          value={inputValue}
+          onChange={(event) => {
+            const value = event.target.value;
+            setInputValue(value);
+            if (!composing.current && !event.nativeEvent.isComposing)
+              setQuery(value);
+          }}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={(event) => {
+            composing.current = false;
+            const value = event.currentTarget.value;
+            setInputValue(value);
+            setQuery(value);
+          }}
+          placeholder={i18n("options_search")}
+          aria-label={i18n("options_search")}
+        />
+        {inputValue.length > 0 && (
+          <button
+            type="button"
+            className="kt-options-search__clear"
+            aria-label={i18n("options_clear_search")}
+            title={i18n("options_clear_search")}
+            onClick={clearSearch}
+          >
+            <CloseRoundedIcon />
+          </button>
+        )}
+      </div>
+      {navigation}
       {isMobile && (
         <button
           type="button"

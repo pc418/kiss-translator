@@ -13,8 +13,12 @@
 
 ## ✨ 解决方案
 
-### 单一版本源
-**`package.json` 是项目中唯一的版本号来源**。其他所有文件的版本号均由此文件自动分发与同步。
+### 版本来源
+
+- `package.json` 的 `version` 是扩展包、普通油猴脚本和 iOS Safari 脚本的统一构建版本，自动同步到 `.env` 和各扩展 manifest。发布标签为 `v<version>`，Web 构建用该版本生成 `userscript-version.txt`。
+- `package.json` 的 `extensionStoreVersion` 记录扩展商店已开放下载的版本。Web 构建用它生成 `version.txt`，供扩展设置页检查更新。
+
+油猴修复也走下文的统一发布流程。`pnpm version:*` 只提升构建版本。扩展新版在商店可下载后，再手动更新 `extensionStoreVersion` 并部署主站和 GitHub Pages。只更新该字段时可以走网站部署流程。
 
 ### 自动同步机制
 * **构建时自动同步：** 执行以下打包命令时，底层会自动先触发版本号同步，确保产物一致。
@@ -115,6 +119,6 @@ git push origin dev
 ## ⚠️ 注意事项
 
 1. **不要手动修改** `.env`、`manifest.json` 等文件中的版本号。
-2. **只需修改** `package.json` 中的版本号，或者使用 `pnpm version:*` 命令（如果手动修改了 `package.json`，记得运行 `pnpm sync-version`）。
+2. 用 `pnpm version:*` 更新统一构建版本。如果手动修改了 `version`，记得运行 `pnpm sync-version`。
 3. 每次构建前会自动同步版本号，确保所有文件版本一致。
 4. 更新版本后记得同步更新 `CHANGELOG.md`，确保内容与版本号完全对应。

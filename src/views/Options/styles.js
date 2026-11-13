@@ -83,6 +83,8 @@ button.kt-options-nav__link { width: 100%; border: none; background: transparent
 .kt-options-nav__settings { margin: 4px 0 0 26px; padding: 0 0 0 12px; border-left: 1px solid var(--kt-linev); list-style: none; }
 .kt-options-nav__setting { display: block; padding: 9px 10px; border-radius: 10px; color: var(--kt-onv); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; text-decoration: none; }
 .kt-options-nav__setting:hover, .kt-options-nav__setting[aria-current] { background: var(--kt-sf2); color: var(--kt-on); }
+.kt-options-nav__setting mark { border-radius: 3px; background: var(--kt-pric); color: var(--kt-onpric); font-weight: 700; }
+.kt-options-nav__match-detail { display: block; margin-top: 3px; font-size: 11px; line-height: 1.5; }
 .kt-options-page [data-settings-search-target] { outline: none; isolation: isolate; scroll-margin-block: 100px; }
 [data-settings-search-positioned] { position: relative; }
 .kt-options-page [data-settings-search-target]::after { content: ""; position: absolute; inset: 0; z-index: 1; border-radius: var(--kt-settings-search-radius, 12px); background: var(--kt-pri); opacity: 0; pointer-events: none; animation: kt-settings-search-highlight 6s ease-in-out; }
@@ -267,8 +269,8 @@ button.kt-options-nav__link { width: 100%; border: none; background: transparent
 .kt-style-grid .kt-style-card.Mui-expanded { grid-column: 1 / -1; }
 .kt-style-card .MuiAccordionSummary-root { min-height: 124px; align-items: stretch; }
 .kt-style-card .MuiAccordionSummary-content { min-width: 0; margin: 0; }
-.kt-style-card__summary { min-width: 0; display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 3px; padding: 12px 0; color: var(--kt-on); }
-.kt-style-card__summary > span { overflow: hidden; font-size: 12px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
+.kt-style-card__summary { min-width: 0; display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 3px; overflow: hidden; padding: 12px 0; color: var(--kt-on); }
+.kt-style-card__summary > span { font-size: 12px; line-height: 1.45; white-space: nowrap; }
 .kt-style-card__summary > .MuiTypography-root { margin-top: 7px; color: var(--kt-onv); font-size: 11px; font-weight: 700; }
 .kt-overview-top { display: grid; grid-template-columns: 1.35fr 1fr; gap: 14px; margin-bottom: 20px; }
 .kt-overview-hero { min-height: 200px; display: flex; flex-direction: column; position: relative; padding: 24px; border-radius: 16px; background: var(--kt-pric); color: var(--kt-onpric); overflow: hidden; }
